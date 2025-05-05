@@ -25,7 +25,7 @@ export default function DashboardCarCard(props: DashboardCarCard) {
     const formatKilometer = new Intl.NumberFormat('id-ID').format(props.kilometer);
 
     return (
-        <div className="card bg-base-100 w-96 shadow-xl hover:shadow-2xl transition-shadow duration-300">
+        <div className="card bg-base-100 w-64 shadow-xl hover:shadow-2xl transition-shadow duration-300">
             <figure className="relative w-full h-48 overflow-hidden">
                 <img
                     src={props.image_url}

@@ -1,3 +1,4 @@
+"use server"
 import { cookies } from 'next/headers';
 import { createClient } from '../utils/supabase/server';
 
@@ -12,4 +13,11 @@ export async function getAllCarDetail() {
         return null;
     }
     return data;
+}
+
+
+export async function createClientWithCookies() {
+    const cookieStore = cookies();
+    const supabase = await createClient(cookieStore);
+    return supabase;
 }
