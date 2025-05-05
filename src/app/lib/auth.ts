@@ -1,0 +1,110 @@
+import { createClient } from "../utils/supabase/client";
+import { Database } from "../lib/database.types";
+export type AuthError = { message: string };
+export async function signInWithGoogle(redirectTo: string = "/dashboard") {
+  const supabase = createClient();
+  try {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=${redirectTo}`,
+        queryParams: { access_type: "offline", prompt: "consent" },
+      },
+    });
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error: any) {
+    console.error("Google sign in error:", error);
+    return {
+      data: null,
+      error: { message: error.message || "Failed to sign in with Google" },
+    };
+  }
+}
+export async function signInWithEmailPassword(email: string, password: string) {
+  const supabase = createClient();
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error: any) {
+    console.error("Email/password sign in error:", error);
+    return {
+      data: null,
+      error: { message: error.message || "Failed to sign in" },
+    };
+  }
+}
+export async function signOut() {
+  const supabase = createClient();
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+    return { error: null };
+  } catch (error: any) {
+    console.error("Sign out error:", error);
+    return { error: { message: error.message || "Failed to sign out" } };
+  }
+}
+export async function getCurrentUser() {
+  const supabase = createClient();
+  try {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+    if (error) throw error;
+    return { user, error: null };
+  } catch (error: any) {
+    console.error("Get user error:", error);
+    return {
+      user: null,
+      error: { message: error.message || "Failed to get current user" },
+    };
+  }
+}
+export async function getUserSession() {
+  const supabase = createClient();
+  try {
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession();
+    if (error) throw error;
+    return { session, error: null };
+  } catch (error: any) {
+    console.error("Get session error:", error);
+    return {
+      session: null,
+      error: { message: error.message || "Failed to get user session" },
+    };
+  }
+}
+export async function isUserApproved() {
+  const supabase = createClient();
+  try {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError || !user) throw userError || new Error("No user found");
+    const { data, error } = await supabase
+      .from("users")
+      .select("is_approved")
+      .eq("id", user.id)
+      .single();
+    if (error) throw error;
+    return { isApproved: data?.is_approved || false, error: null };
+  } catch (error: any) {
+    console.error("Check user approval error:", error);
+    return {
+      isApproved: false,
+      error: {
+        message: error.message || "Failed to check user approval status",
+      },
+    };
+  }
+}
