@@ -2,7 +2,7 @@
 
 import { handleSignOut } from "@/app/utils/functions/utilFunctions";
 import Link from "next/link";
-import { FaHome, FaPlus, FaSignOutAlt } from "react-icons/fa";
+import { FaHome, FaPlus, FaSignOutAlt, FaChartBar } from "react-icons/fa";
 
 export default function DashboardSideMenu() {
     return (
@@ -48,6 +48,12 @@ export default function DashboardSideMenu() {
                             <Link href="/tambahMobil" className="flex items-center gap-2">
                                 <FaPlus />
                                 Tambah Mobil
+                            </Link>
+                        </li>
+                        <li>
+                            <Link href="/analitik" className="flex items-center gap-2">
+                                <FaChartBar />
+                                Analitik
                             </Link>
                         </li>
                         <li>

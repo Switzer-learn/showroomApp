@@ -3,13 +3,14 @@
 -- Aktifkan ekstensi UUID
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Drop tables and storage in reverse order of dependencies
+-- Drop policies and storage
 DROP POLICY IF EXISTS "Images are publicly accessible" ON storage.objects;
 DROP POLICY IF EXISTS "Authenticated users can upload images" ON storage.objects;
 DROP POLICY IF EXISTS "Authenticated users can update their own images" ON storage.objects;
 
 DELETE FROM storage.buckets WHERE id = 'gambar-mobil';
 
+-- Drop tables
 DROP TABLE IF EXISTS mobil_images;
 DROP TABLE IF EXISTS penjualan;
 DROP TABLE IF EXISTS mobil;
@@ -80,6 +81,7 @@ CREATE TABLE penjualan (
   harga_kredit INTEGER,
   dana_dari_leasing INTEGER,
   tanggal_jual DATE NOT NULL,
+  total_harga INTEGER NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -155,4 +157,28 @@ DROP POLICY IF EXISTS "Allow all authenticated" ON customers;
 CREATE POLICY "Allow all authenticated"
   ON customers FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
+-- Sample Data Inserts
+INSERT INTO users (email, nama, no_hp, approved, level) VALUES
+  ('admin@example.com', 'Admin Utama', '081234567890', true, 'admin'),
+  ('sales1@example.com', 'Sales One', '081234567891', true, 'sales'),
+  ('sales2@example.com', 'Sales Two', '081234567892', false, 'sales');
 
+INSERT INTO customers (nama, no_hp, alamat, jenis_kelamin) VALUES
+  ('Budi Santoso', '081234567893', 'Jakarta', 'Laki-laki'),
+  ('Siti Aminah', '081234567894', 'Bandung', 'Perempuan'),
+  ('Tono Wirawan', '081234567895', 'Surabaya', 'Laki-laki');
+
+INSERT INTO mobil (merk, tipe, model, series, body_type, variation, tahun, plat_nomor, warna, transmisi, bahan_bakar, kondisi, kilometer, harga_beli, harga_jual, tanggal_beli, deskripsi, status, image_url, previous_owners, registration_expiry) VALUES
+  ('Toyota', 'Avanza', 'G', '1.5', 'MPV', 'Luxury', 2020, 'B1234XYZ', 'Hitam', 'Manual', 'Bensin', 'Baik', 45000, 150000000, 160000000, '2024-01-01', 'Mobil keluarga irit', 'Tersedia', 'https://example.com/image1.jpg', 1, '2025-01-01'),
+  ('Honda', 'Jazz', 'RS', NULL, 'Hatchback', 'Sport', 2019, 'B5678ABC', 'Merah', 'Otomatis', 'Bensin', 'Sangat Baik', 30000, 170000000, 180000000, '2023-05-10', 'Mobil sporty anak muda', 'Tersedia', 'https://example.com/image2.jpg', 1, '2025-05-10'),
+  ('Suzuki', 'Ertiga', 'GL', NULL, 'MPV', NULL, 2018, 'B9999ZZZ', 'Putih', 'Manual', 'Bensin', 'Cukup', 60000, 120000000, 130000000, '2022-08-15', 'Cocok untuk keluarga kecil', 'Tersedia', 'https://example.com/image3.jpg', 2, '2024-08-15');
+
+INSERT INTO penjualan (mobil_id, customer_id, sales_id, nama_pembeli, alamat_pembeli, nomor_hp_pembeli, metode_pembayaran, nama_leasing, uang_muka, harga_kredit, dana_dari_leasing, tanggal_jual) VALUES
+  ((SELECT id FROM mobil WHERE plat_nomor = 'B1234XYZ'), (SELECT id FROM customers WHERE nama = 'Budi Santoso'), (SELECT id FROM users WHERE email = 'sales1@example.com'), 'Budi Santoso', 'Jakarta', '081234567893', 'Tunai', NULL, NULL, NULL, NULL, '2024-02-01'),
+  ((SELECT id FROM mobil WHERE plat_nomor = 'B5678ABC'), (SELECT id FROM customers WHERE nama = 'Siti Aminah'), (SELECT id FROM users WHERE email = 'sales2@example.com'), 'Siti Aminah', 'Bandung', '081234567894', 'Kredit', 'Mega Finance', 50000000, 200000000, 150000000, '2024-03-15'),
+  ((SELECT id FROM mobil WHERE plat_nomor = 'B9999ZZZ'), (SELECT id FROM customers WHERE nama = 'Tono Wirawan'), (SELECT id FROM users WHERE email = 'sales1@example.com'), 'Tono Wirawan', 'Surabaya', '081234567895', 'Tunai', NULL, NULL, NULL, NULL, '2024-04-20');
+
+INSERT INTO mobil_images (mobil_id, image_url) VALUES
+  ((SELECT id FROM mobil WHERE plat_nomor = 'B1234XYZ'), 'https://example.com/image1-1.jpg'),
+  ((SELECT id FROM mobil WHERE plat_nomor = 'B5678ABC'), 'https://example.com/image2-1.jpg'),
+  ((SELECT id FROM mobil WHERE plat_nomor = 'B9999ZZZ'), 'https://example.com/image3-1.jpg');
