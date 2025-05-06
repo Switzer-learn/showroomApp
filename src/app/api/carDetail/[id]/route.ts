@@ -4,7 +4,7 @@ import { createClient } from '@/app/utils/supabase/server';
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   try {
     const cookieStore = cookies();
@@ -14,7 +14,7 @@ export async function PUT(
     const { data, error } = await supabase
       .from('mobil')
       .update(body)
-      .eq('id', params.id)
+      .eq('id', context.params.id)
       .select();
     
     if (error) {
