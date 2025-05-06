@@ -1,32 +1,62 @@
+import { createClient } from '@/app/utils/supabase/server'
 import { NextResponse } from 'next/server'
-// The client you created from the Server-Side Auth instructions
-import { createClient } from '../../utils/supabase/server'
 import { cookies } from 'next/headers'
 
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url)
-  const code = searchParams.get('code')
-  // if "next" is in param, use it as the redirect URL
-  const next = searchParams.get('next') ?? '/'
-  const cookieStore = cookies();
+  const requestUrl = new URL(request.url)
+  const code = requestUrl.searchParams.get('code')
+  const next = requestUrl.searchParams.get('next') || '/dashboard'
 
   if (code) {
+    const cookieStore = cookies()
     const supabase = await createClient(cookieStore)
-    const { error } = await supabase.auth.exchangeCodeForSession(code)
-    if (!error) {
-      const forwardedHost = request.headers.get('x-forwarded-host') // original origin before load balancer
-      const isLocalEnv = process.env.NODE_ENV === 'development'
-      if (isLocalEnv) {
-        // we can be sure that there is no load balancer in between, so no need to watch for X-Forwarded-Host
-        return NextResponse.redirect(`${origin}${next}`)
-      } else if (forwardedHost) {
-        return NextResponse.redirect(`https://${forwardedHost}${next}`)
-      } else {
-        return NextResponse.redirect(`${origin}${next}`)
+
+    try {
+      // Exchange the code for a session
+      const { data: { session }, error: sessionError } = await supabase.auth.exchangeCodeForSession(code)
+      
+      if (sessionError) throw sessionError
+
+      if (session?.user) {
+        // Check if user already exists in users table
+        const { data: existingUser, error: userError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', session.user.id)
+          .single()
+
+        if (userError && userError.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+          throw userError
+        }
+
+        if (!existingUser) {
+          // Insert new user into users table
+          const { error: insertError } = await supabase
+            .from('users')
+            .insert([
+              {
+                id: session.user.id,
+                email: session.user.email,
+                nama: session.user.user_metadata?.full_name || null,
+                no_hp: session.user.user_metadata?.phone || null,
+                approved: false, // Default to false, admin needs to approve
+                level: 'sales', // Default to sales, admin can change to admin
+                created_at: new Date().toISOString()
+              }
+            ])
+
+          if (insertError) throw insertError
+        }
+
+        // Redirect to dashboard
+        return NextResponse.redirect(new URL(next, requestUrl.origin))
       }
+    } catch (error) {
+      console.error('Auth callback error:', error)
+      return NextResponse.redirect(new URL('/auth/error', requestUrl.origin))
     }
   }
 
-  // return the user to an error page with instructions
-  return NextResponse.redirect(`${origin}/auth/auth-code-error`)
+  // Return the user to an error page with instructions
+  return NextResponse.redirect(new URL('/auth/error', requestUrl.origin))
 }

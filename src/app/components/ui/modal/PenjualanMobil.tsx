@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/app/utils/supabase/client"
+import { toast } from 'react-hot-toast'
 
 interface PenjualanMobilProps {
     isOpen: boolean;
@@ -87,6 +88,65 @@ export default function PenjualanMobil({ isOpen, onClose, carData }: PenjualanMo
             currency: 'IDR',
             minimumFractionDigits: 0,
         }).format(value)
+    }
+
+    const handleSubmit = async () => {
+        const confirmed = window.confirm('Apakah Anda yakin ingin menyimpan data penjualan ini?');
+        if (!confirmed) return;
+
+        try {
+            const supabase = createClient();
+            
+            // Insert customer data
+            const { data: customer, error: customerError } = await supabase
+                .from('customers')
+                .insert([{
+                    nama: customerData.nama,
+                    no_hp: customerData.no_hp,
+                    alamat: customerData.alamat,
+                    jenis_kelamin: customerData.jenis_kelamin
+                }])
+                .select()
+                .single();
+
+            if (customerError) throw customerError;
+
+            // Insert penjualan data
+            const { data: penjualan, error: penjualanError } = await supabase
+                .from('penjualan')
+                .insert([{
+                    mobil_id: carData.id,
+                    customer_id: customer.id,
+                    nama_pembeli: customerData.nama,
+                    alamat_pembeli: customerData.alamat,
+                    nomor_hp_pembeli: customerData.no_hp,
+                    metode_pembayaran: paymentData.metode_pembayaran,
+                    nama_leasing: paymentData.nama_leasing,
+                    uang_muka: paymentData.uang_muka,
+                    harga_kredit: paymentData.harga_kredit,
+                    dana_dari_leasing: paymentData.dana_dari_leasing,
+                    tanggal_jual: new Date().toISOString().split('T')[0],
+                    total_harga: totalHarga
+                }])
+                .select()
+                .single();
+
+            if (penjualanError) throw penjualanError;
+
+            // Update mobil status to 'Terjual'
+            const { error: updateError } = await supabase
+                .from('mobil')
+                .update({ status: 'Terjual' })
+                .eq('id', carData.id);
+
+            if (updateError) throw updateError;
+
+            toast.success('Data penjualan berhasil disimpan');
+            onClose();
+        } catch (error) {
+            console.error('Error:', error);
+            toast.error('Gagal menyimpan data penjualan');
+        }
     }
 
     if (!isOpen) return null
@@ -272,7 +332,7 @@ export default function PenjualanMobil({ isOpen, onClose, carData }: PenjualanMo
                 {/* Action Buttons */}
                 <div className="modal-action">
                     <button className="btn btn-ghost" onClick={onClose}>Batal</button>
-                    <button className="btn btn-primary">Simpan Penjualan</button>
+                    <button className="btn btn-primary" onClick={handleSubmit}>Simpan Penjualan</button>
                 </div>
             </div>
         </div>

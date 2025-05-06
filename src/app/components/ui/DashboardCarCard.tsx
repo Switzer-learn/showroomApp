@@ -1,3 +1,10 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import PenjualanMobil from "./modal/PenjualanMobil"
+import { getUserLevel } from "@/app/lib/dbFunction"
+import { createClient } from "@/app/utils/supabase/client"
+
 interface DashboardCarCard {
     id: string;
     merk: string;
@@ -14,11 +21,21 @@ interface DashboardCarCard {
     warna: string;
 }
 
-import { useState } from "react"
-import PenjualanMobil from "./modal/PenjualanMobil"
-
 export default function DashboardCarCard(props: DashboardCarCard) {
     const [isModalOpen, setIsModalOpen] = useState(false)
+    const [userLevel, setUserLevel] = useState<'admin' | 'sales' | null>(null)
+
+    useEffect(() => {
+        async function checkUserLevel() {
+            const supabase = createClient();
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const level = await getUserLevel(user.id);
+                setUserLevel(level);
+            }
+        }
+        checkUserLevel();
+    }, []);
 
     // Format currency to IDR
     const formatHargaJual = new Intl.NumberFormat('id-ID', {
@@ -32,14 +49,18 @@ export default function DashboardCarCard(props: DashboardCarCard) {
 
     return (
         <>
-            <div className="card bg-base-100 w-64 shadow-xl hover:shadow-2xl transition-shadow duration-300">
+            <div className="card bg-base-100 w-full md:w-80 shadow-xl hover:shadow-2xl transition-shadow duration-300">
                 <figure className="relative w-full h-48 overflow-hidden">
                     <img
                         src={props.image_url}
                         alt={`${props.merk} ${props.model}`}
                         className="w-full h-full object-cover"
                     />
-                    <div className="absolute top-0 right-0 bg-primary text-white px-3 py-1 m-2 rounded-md text-sm font-medium">
+                    <div className={`absolute top-0 right-0 px-3 py-1 m-2 rounded-md text-sm font-medium ${
+                        props.status === 'Terjual' 
+                            ? 'bg-red-500 text-white' 
+                            : 'bg-green-500 text-white'
+                    }`}>
                         {props.status}
                     </div>
                 </figure>
@@ -81,7 +102,7 @@ export default function DashboardCarCard(props: DashboardCarCard) {
                         <button 
                             className="btn btn-primary btn-sm"
                             onClick={() => setIsModalOpen(true)}
-                            disabled={props.status === 'Terjual'}
+                            disabled={props.status === 'Terjual' || userLevel !== 'admin'}
                         >
                             {props.status === 'Terjual' ? 'Terjual' : 'Mark as Sold'}
                         </button>

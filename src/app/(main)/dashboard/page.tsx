@@ -5,6 +5,9 @@ import { CarInterface } from "@/app/type/car/carInterface"
 import DashboardCarCard from "@/app/components/ui/DashboardCarCard"
 import { createClient } from "@/app/utils/supabase/client"
 import { FaFilter, FaSearch } from "react-icons/fa"
+import { getUserLevel } from "@/app/lib/dbFunction"
+import { isUserApproved } from "@/app/lib/auth"
+import router from "next/router"
 
 interface FilterState {
     merk: string;
@@ -30,6 +33,7 @@ export default function Dashboard() {
         maxHarga: '',
         searchQuery: ''
     })
+    const [userLevel, setUserLevel] = useState<'admin' | 'sales' | null>(null)
     const [uniqueValues, setUniqueValues] = useState({
         merks: [] as string[],
         bodyTypes: [] as string[],
@@ -37,6 +41,10 @@ export default function Dashboard() {
         kondisi: ['Sangat Baik', 'Baik', 'Cukup', 'Rusak Ringan'],
         status: ['Tersedia', 'Terjual']
     })
+
+    useEffect(() => {
+            
+        }, []);
 
     // Fetch unique values for filters
     useEffect(() => {
@@ -61,6 +69,21 @@ export default function Dashboard() {
                 bodyTypes: [...new Set(bodyTypes?.map(b => b.body_type) || [])]
             }))
         }
+
+        async function checkUserLevel() {
+            const supabase = createClient();
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const level = await getUserLevel(user.id);
+                const isApproved = await isUserApproved();
+                console.log(isApproved)
+                if (!isApproved.isApproved) {
+                    router.push('/auth/pending');
+                }
+                setUserLevel(level);
+            }
+        }
+        checkUserLevel();
 
         fetchUniqueValues()
     }, [])

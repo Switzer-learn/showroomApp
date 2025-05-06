@@ -16,6 +16,18 @@ DROP TABLE IF EXISTS penjualan;
 DROP TABLE IF EXISTS mobil;
 DROP TABLE IF EXISTS customers;
 DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS pending_users;
+
+-- Tabel Pending Users (for new registrations)
+CREATE TABLE pending_users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email TEXT NOT NULL UNIQUE,
+    nama TEXT,
+    no_hp TEXT,
+    approved BOOLEAN DEFAULT FALSE,
+    level TEXT CHECK (level IN ('admin', 'sales')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
 -- Tabel Users (Admin & Sales)
 CREATE TABLE users (
@@ -182,3 +194,71 @@ INSERT INTO mobil_images (mobil_id, image_url) VALUES
   ((SELECT id FROM mobil WHERE plat_nomor = 'B1234XYZ'), 'https://example.com/image1-1.jpg'),
   ((SELECT id FROM mobil WHERE plat_nomor = 'B5678ABC'), 'https://example.com/image2-1.jpg'),
   ((SELECT id FROM mobil WHERE plat_nomor = 'B9999ZZZ'), 'https://example.com/image3-1.jpg');
+
+
+-- fncton
+create or replace function analytics()
+returns text
+language sql
+as $$
+  with summary as (
+    select
+      coalesce(sum(p.total_harga), 0) as total_revenue,
+      coalesce(sum(m.harga_beli), 0) as total_cost,
+      coalesce(sum(p.total_harga), 0) - coalesce(sum(m.harga_beli), 0) as profit,
+      case
+        when coalesce(sum(p.total_harga), 0) = 0 then 0
+        else round(
+          ((coalesce(sum(p.total_harga), 0) - coalesce(sum(m.harga_beli), 0))::numeric
+          / coalesce(sum(p.total_harga), 1)) * 100, 2
+        )
+      end as profit_margin
+    from penjualan p
+    join mobil m on p.id_mobil = m.id
+  ),
+  sales_by_month as (
+    select
+      to_char(p.created_at, 'YYYY-MM') as month,
+      count(*) as count,
+      sum(p.total_harga) as total
+    from penjualan p
+    group by 1
+    order by 1
+  ),
+  top_5_best_sellers as (
+    select
+      m.merk,
+      m.series,
+      count(*) as units_sold
+    from penjualan p
+    join mobil m on p.id_mobil = m.id
+    group by m.merk, m.series
+    order by units_sold desc
+    limit 5
+  ),
+  avg_days_to_sell as (
+    select
+      avg(extract(day from p.created_at - m.created_at)) as avg_days
+    from penjualan p
+    join mobil m on p.id_mobil = m.id
+  ),
+  unsold_over_90_days as (
+    select
+      m.id,
+      m.merk,
+      m.series,
+      extract(day from now() - m.created_at) as age
+    from mobil m
+    where m.id not in (select id_mobil from penjualan)
+    and now() - m.created_at > interval '90 days'
+  )
+  select json_build_object(
+    'summary', (select row_to_json(summary) from summary),
+    'sales_by_month', (select json_agg(sales_by_month) from sales_by_month),
+    'top_5_best_sellers', (select json_agg(top_5_best_sellers) from top_5_best_sellers),
+    'avg_days_to_sell', (select avg_days from avg_days_to_sell),
+    'unsold_over_90_days', (select json_agg(unsold_over_90_days) from unsold_over_90_days)
+  )::text;
+$$;
+
+

@@ -17,6 +17,7 @@ import {
 } from 'chart.js';
 import { Bar, Pie, Line, Doughnut } from 'react-chartjs-2';
 import { FaChartBar, FaChartPie, FaChartLine, FaCarSide, FaMoneyBillWave, FaUserTie } from 'react-icons/fa';
+import { getMonthlySalesData, getAnalyticsData } from '@/app/lib/dbFunction';
 
 // Register ChartJS components
 ChartJS.register(
@@ -95,6 +96,37 @@ interface MonthlyData {
   };
 }
 
+interface MonthlySales {
+  month: string;
+  count: number;
+}
+
+interface AnalyticsData {
+    summary: {
+        total_revenue: number;
+        total_cost: number;
+        profit: number;
+        profit_margin: number;
+    };
+    sales_by_month: Array<{
+        month: string;
+        count: number;
+        total: number;
+    }>;
+    top_5_best_sellers: Array<{
+        merk: string;
+        series: string;
+        units_sold: number;
+    }>;
+    avg_days_to_sell: number;
+    unsold_over_90_days: Array<{
+        id: string;
+        merk: string;
+        series: string;
+        age: number;
+    }>;
+}
+
 export default function AnalitikPage() {
   const [loading, setLoading] = useState(true);
   const [salesPerformance, setSalesPerformance] = useState<SalesPerformance[]>([]);
@@ -104,7 +136,9 @@ export default function AnalitikPage() {
   const [monthlyRevenue, setMonthlyRevenue] = useState<MonthlyRevenue[]>([]);
   const [profitLoss, setProfitLoss] = useState<ProfitLoss | null>(null);
   const [bodyTypeDistribution, setBodyTypeDistribution] = useState<BodyTypeDistribution[]>([]);
-  const [timeFrame, setTimeFrame] = useState('year'); // 'year', 'month', 'week'
+  const [monthlySales, setMonthlySales] = useState<MonthlySales[]>([]);
+  const [timeFrame, setTimeFrame] = useState<'week' | 'month' | 'year'>('year');
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
 
   // Fetch data from Supabase
   useEffect(() => {
@@ -287,6 +321,14 @@ export default function AnalitikPage() {
           profit_margin: profitMargin
         });
 
+        // Fetch monthly sales data
+        const monthlySalesData = await getMonthlySalesData(timeFrame);
+        setMonthlySales(monthlySalesData);
+
+        // Fetch analytics data
+        const analytics = await getAnalyticsData();
+        setAnalyticsData(analytics);
+
       } catch (error) {
         console.error('Error fetching data:', error);
       } finally {
@@ -419,6 +461,63 @@ export default function AnalitikPage() {
         tension: 0.4,
       },
     ],
+  };
+
+  // Add monthly sales chart data
+  const monthlySalesData = {
+    labels: monthlySales.map(item => item.month),
+    datasets: [
+      {
+        label: 'Jumlah Penjualan (Unit)',
+        data: monthlySales.map(item => item.count),
+        backgroundColor: 'rgba(255, 159, 64, 0.6)',
+        borderColor: 'rgba(255, 159, 64, 1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+      },
+    ],
+  };
+
+  const monthlySalesChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'top' as const,
+        labels: {
+          color: '#cbd5e1',
+        },
+      },
+      title: {
+        display: true,
+        text: 'Penjualan Bulanan (Unit)',
+        color: '#e2e8f0',
+        font: {
+          size: 16,
+        },
+      },
+    },
+    scales: {
+      y: {
+        beginAtZero: true,
+        ticks: {
+          stepSize: 1,
+          color: '#cbd5e1',
+        },
+        grid: {
+          color: 'rgba(148, 163, 184, 0.1)',
+        },
+      },
+      x: {
+        ticks: {
+          color: '#cbd5e1',
+        },
+        grid: {
+          color: 'rgba(148, 163, 184, 0.1)',
+        },
+      },
+    },
   };
 
   // Define chart options
@@ -605,6 +704,61 @@ export default function AnalitikPage() {
     },
   };
 
+  // Add new chart for top 5 best sellers
+  const bestSellersData = {
+    labels: analyticsData?.top_5_best_sellers.map(item => `${item.merk} ${item.series}`) || [],
+    datasets: [
+      {
+        label: 'Units Sold',
+        data: analyticsData?.top_5_best_sellers.map(item => item.units_sold) || [],
+        backgroundColor: 'rgba(75, 192, 192, 0.6)',
+        borderColor: 'rgba(75, 192, 192, 1)',
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const bestSellersChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'top' as const,
+        labels: {
+          color: '#cbd5e1',
+        },
+      },
+      title: {
+        display: true,
+        text: 'Top 5 Best Selling Models',
+        color: '#e2e8f0',
+        font: {
+          size: 16,
+        },
+      },
+    },
+    scales: {
+      y: {
+        beginAtZero: true,
+        ticks: {
+          stepSize: 1,
+          color: '#cbd5e1',
+        },
+        grid: {
+          color: 'rgba(148, 163, 184, 0.1)',
+        },
+      },
+      x: {
+        ticks: {
+          color: '#cbd5e1',
+        },
+        grid: {
+          color: 'rgba(148, 163, 184, 0.1)',
+        },
+      },
+    },
+  };
+
   // Format currency
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -676,8 +830,8 @@ export default function AnalitikPage() {
             <h2 className="card-title text-gray-300 flex items-center">
               <FaMoneyBillWave className="mr-2 text-green-400" /> Total Penjualan
             </h2>
-            <p className="text-3xl font-bold">{salesPerformance.reduce((acc, item) => acc + item.total_sales, 0)}</p>
-            <p className="text-gray-400 text-sm">Jumlah kendaraan yang terjual</p>
+            <p className="text-3xl md:text-lg font-bold">{analyticsData?.summary.total_revenue ? formatCurrency(analyticsData.summary.total_revenue) : 'Rp0'}</p>
+            <p className="text-gray-400 text-sm">Total pendapatan dari penjualan</p>
           </div>
         </div>
         
@@ -686,7 +840,7 @@ export default function AnalitikPage() {
             <h2 className="card-title text-gray-300 flex items-center">
               <FaChartLine className="mr-2 text-purple-400" /> Profit
             </h2>
-            <p className="text-3xl font-bold text-green-400">{profitLoss ? formatCurrency(profitLoss.gross_profit) : 'Rp0'}</p>
+            <p className="text-3xl md:text-lg font-bold text-green-400">{analyticsData?.summary.profit ? formatCurrency(analyticsData.summary.profit) : 'Rp0'}</p>
             <p className="text-gray-400 text-sm">Total keuntungan dari seluruh penjualan</p>
           </div>
         </div>
@@ -696,8 +850,17 @@ export default function AnalitikPage() {
             <h2 className="card-title text-gray-300 flex items-center">
               <FaUserTie className="mr-2 text-yellow-400" /> Margin Profit
             </h2>
-            <p className="text-3xl font-bold">{profitLoss ? `${profitLoss.profit_margin.toFixed(1)}%` : '0%'}</p>
+            <p className="text-3xl font-bold">{analyticsData?.summary.profit_margin ? `${analyticsData.summary.profit_margin.toFixed(1)}%` : '0%'}</p>
             <p className="text-gray-400 text-sm">Persentase profit dari total pendapatan</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Add Best Sellers Chart */}
+      <div className="card bg-gray-800 shadow-xl border border-gray-700 mb-8">
+        <div className="card-body">
+          <div className="h-80">
+            <Bar data={bestSellersData} options={bestSellersChartOptions} />
           </div>
         </div>
       </div>
@@ -711,20 +874,11 @@ export default function AnalitikPage() {
               <Pie data={brandData} options={pieChartOptions} />
             </div>
           </div>
-        </div>
-
-        {/* Series Distribution (Bar Chart) */}
-        <div className="card bg-gray-800 shadow-xl border border-gray-700">
-          <div className="card-body">
-            <div className="h-80">
-              <Bar data={seriesData} options={barChartOptions} />
-            </div>
-          </div>
-        </div>
-      </div>
+        </div>        
+      
 
       {/* Charts Section - Second Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+      
         {/* Sales Performance (Bar Chart) */}
         <div className="card bg-gray-800 shadow-xl border border-gray-700">
           <div className="card-body">
@@ -744,6 +898,15 @@ export default function AnalitikPage() {
         </div>
       </div>
 
+      {/* Add Monthly Sales Chart before Revenue Chart */}
+      <div className="card bg-gray-800 shadow-xl border border-gray-700 mb-8">
+        <div className="card-body">
+          <div className="h-80">
+            <Line data={monthlySalesData} options={monthlySalesChartOptions} />
+          </div>
+        </div>
+      </div>
+
       {/* Revenue Chart (Line Chart) - Full Width */}
       <div className="card bg-gray-800 shadow-xl border border-gray-700 mb-8">
         <div className="card-body">
@@ -753,45 +916,45 @@ export default function AnalitikPage() {
         </div>
       </div>
 
-      {/* Profit & Loss Table */}
-      <div className="card bg-gray-800 shadow-xl border border-gray-700">
-        <div className="card-body">
-          <h2 className="card-title text-xl mb-4 flex items-center">
-            <FaMoneyBillWave className="mr-2 text-green-400" /> Laporan Laba Rugi
-          </h2>
-          
-          <div className="overflow-x-auto">
-            <table className="table table-zebra bg-gray-800 text-gray-100">
-              <thead className="bg-gray-700 text-gray-200">
-                <tr>
-                  <th>Keterangan</th>
-                  <th className="text-right">Nilai</th>
-                  <th className="text-right">Persentase</th>
-                </tr>
-              </thead>
-              <tbody>
-                {profitLoss && (
-                  <>
-                    <tr>
-                      <td className="font-medium">Total Pendapatan</td>
-                      <td className="text-right">{formatCurrency(profitLoss.total_revenue)}</td>
-                      <td className="text-right">100%</td>
+      {/* Add Unsold Cars Table */}
+      {analyticsData?.unsold_over_90_days && analyticsData.unsold_over_90_days.length > 0 && (
+        <div className="card bg-gray-800 shadow-xl border border-gray-700 mb-8">
+          <div className="card-body">
+            <h2 className="card-title text-xl mb-4">Kendaraan Belum Terjual (&gt;90 hari)</h2>
+            <div className="overflow-x-auto">
+              <table className="table table-zebra bg-gray-800 text-gray-100">
+                <thead className="bg-gray-700 text-gray-200">
+                  <tr>
+                    <th>Merk</th>
+                    <th>Series</th>
+                    <th>Usia (hari)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analyticsData.unsold_over_90_days.map((car) => (
+                    <tr key={car.id}>
+                      <td>{car.merk}</td>
+                      <td>{car.series}</td>
+                      <td>{Math.round(car.age)}</td>
                     </tr>
-                    <tr>
-                      <td className="font-medium">Total Biaya</td>
-                      <td className="text-right text-red-400">{formatCurrency(profitLoss.total_cost)}</td>
-                      <td className="text-right">{((profitLoss.total_cost / profitLoss.total_revenue) * 100).toFixed(1)}%</td>
-                    </tr>
-                    <tr className="font-bold">
-                      <td>Laba Kotor</td>
-                      <td className="text-right text-green-400">{formatCurrency(profitLoss.gross_profit)}</td>
-                      <td className="text-right text-green-400">{profitLoss.profit_margin.toFixed(1)}%</td>
-                    </tr>
-                  </>
-                )}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* Add Average Days to Sell */}
+      <div className="card bg-gray-800 shadow-xl border border-gray-700 mb-8">
+        <div className="card-body">
+          <h2 className="card-title text-xl mb-4">Rata-rata Waktu Penjualan</h2>
+          <p className="text-3xl font-bold text-primary">
+            {analyticsData?.avg_days_to_sell 
+              ? `${Math.round(analyticsData.avg_days_to_sell)} hari`
+              : '0 hari'}
+          </p>
+          <p className="text-gray-400 text-sm">Rata-rata waktu yang dibutuhkan untuk menjual kendaraan</p>
         </div>
       </div>
     </div>

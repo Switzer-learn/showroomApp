@@ -1,10 +1,39 @@
 "use client";
 
-import { handleSignOut } from "@/app/utils/functions/utilFunctions";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { FaHome, FaPlus, FaSignOutAlt, FaChartBar } from "react-icons/fa";
+import { FaHome, FaPlus, FaSignOutAlt, FaChartBar, FaUsers } from "react-icons/fa";
+import { useEffect, useState } from "react";
+import { createClient } from "@/app/utils/supabase/client";
+import { getUserLevel } from "@/app/lib/dbFunction";
 
 export default function DashboardSideMenu() {
+    const [userLevel, setUserLevel] = useState<'admin' | 'sales' | null>(null);
+    const router = useRouter();
+
+    useEffect(() => {
+        async function checkUserLevel() {
+            const supabase = createClient();
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const level = await getUserLevel(user.id);
+                setUserLevel(level);
+            }
+        }
+        checkUserLevel();
+    }, []);
+
+    const handleSignOut = async () => {
+        try {
+            const supabase = createClient();
+            const { error } = await supabase.auth.signOut();
+            if (error) throw error;
+            router.push('/login');
+        } catch (error) {
+            console.error('Error signing out:', error);
+        }
+    };
+
     return (
         <div className="drawer md:drawer-open w-64">
             {/* Mobile toggle button */}
@@ -44,18 +73,28 @@ export default function DashboardSideMenu() {
                                 Dashboard
                             </Link>
                         </li>
-                        <li>
-                            <Link href="/tambahMobil" className="flex items-center gap-2">
-                                <FaPlus />
-                                Tambah Mobil
-                            </Link>
-                        </li>
-                        <li>
-                            <Link href="/analitik" className="flex items-center gap-2">
-                                <FaChartBar />
-                                Analitik
-                            </Link>
-                        </li>
+                        {userLevel === 'admin' && (
+                            <>
+                                <li>
+                                    <Link href="/tambahMobil" className="flex items-center gap-2">
+                                        <FaPlus />
+                                        Tambah Mobil
+                                    </Link>
+                                </li>
+                                <li>
+                                    <Link href="/analitik" className="flex items-center gap-2">
+                                        <FaChartBar />
+                                        Analitik
+                                    </Link>
+                                </li>
+                                <li>
+                                    <Link href="/admin/pending-users" className="flex items-center gap-2">
+                                        <FaUsers />
+                                        Pending Users
+                                    </Link>
+                                </li>
+                            </>
+                        )}
                         <li>
                             <button
                                 onClick={handleSignOut}

@@ -3,13 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import Link from 'next/link';
-import { signInWithEmailPassword, signInWithGoogle, getUserSession, isUserApproved } from '@/app/lib/auth';
+import { signInWithGoogle, getUserSession, isUserApproved } from '@/app/lib/auth';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
@@ -19,44 +15,28 @@ export default function Login() {
       const { session, error } = await getUserSession();
       
       if (session) {
-        const { isApproved, error: approvalError } = await isUserApproved();
+        const { isApproved, level, error: approvalError } = await isUserApproved();
         
+        if (approvalError) {
+          setError(approvalError.message);
+          return;
+        }
+
         if (isApproved) {
-          router.push('/dashboard');
+          // Redirect based on user level
+          if (level === 'admin') {
+            router.push('/admin/pending-users');
+          } else {
+            router.push('/dashboard');
+          }
         } else {
-          router.push('/not-approved');
+          router.push('/auth/pending');
         }
       }
     };
 
     checkSession();
   }, [router]);
-
-  const handleEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      const { data, error } = await signInWithEmailPassword(email, password);
-      
-      if (error) throw error;
-      
-      const { isApproved, error: approvalError } = await isUserApproved();
-      
-      if (approvalError) throw approvalError;
-      
-      if (isApproved) {
-        router.push('/dashboard');
-      } else {
-        router.push('/not-approved');
-      }
-    } catch (error: any) {
-      setError(error.message || 'An error occurred during login');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
@@ -124,66 +104,6 @@ export default function Login() {
                 {error}
               </motion.div>
             )}
-
-            <motion.form
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4, duration: 0.5 }}
-              onSubmit={handleEmailLogin}
-              className="space-y-4 mb-6"
-            >
-              <div className="text-left">
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Email
-                </label>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
-                  required
-                />
-              </div>
-              
-              <div className="text-left">
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Password
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
-                  required
-                />
-              </div>
-              
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-300"
-              >
-                {loading ? 'Signing in...' : 'Sign in with Email'}
-              </button>
-            </motion.form>
-
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.5, duration: 0.5 }}
-              className="relative py-2"
-            >
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300 dark:border-gray-600"></div>
-              </div>
-              <div className="relative flex justify-center">
-                <span className="px-2 bg-white dark:bg-gray-800 text-sm text-gray-500 dark:text-gray-400">
-                  Or continue with
-                </span>
-              </div>
-            </motion.div>
 
             <motion.div
               initial={{ opacity: 0, y: 20 }}
