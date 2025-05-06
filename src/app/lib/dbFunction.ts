@@ -389,3 +389,38 @@ export async function getUserLevel(userId: string): Promise<'admin' | 'sales' | 
         return null;
     }
 }
+
+export async function deleteCarById(carId: string): Promise<{ success: boolean; error?: any }> {
+    const supabase = await createClientWithCookies();
+    try {
+        // First check if the car exists and is not sold
+        const { data: car, error: fetchError } = await supabase
+            .from('mobil')
+            .select('status')
+            .eq('id', carId)
+            .single();
+
+        if (fetchError) {
+            return { success: false, error: 'Car not found' };
+        }
+
+        if (car.status === 'Terjual') {
+            return { success: false, error: 'Cannot delete a sold car' };
+        }
+
+        // Delete the car
+        const { error: deleteError } = await supabase
+            .from('mobil')
+            .delete()
+            .eq('id', carId);
+
+        if (deleteError) {
+            return { success: false, error: deleteError };
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('Error deleting car:', error);
+        return { success: false, error };
+    }
+}

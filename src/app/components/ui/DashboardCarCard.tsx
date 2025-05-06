@@ -1,9 +1,12 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import PenjualanMobil from "./modal/PenjualanMobil"
 import { getUserLevel } from "@/app/lib/dbFunction"
 import { createClient } from "@/app/utils/supabase/client"
+import { deleteCarById } from "@/app/lib/dbFunction"
+import { FaEdit, FaTrash } from "react-icons/fa"
 
 interface DashboardCarCard {
     id: string;
@@ -24,6 +27,8 @@ interface DashboardCarCard {
 export default function DashboardCarCard(props: DashboardCarCard) {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [userLevel, setUserLevel] = useState<'admin' | 'sales' | null>(null)
+    const [isDeleting, setIsDeleting] = useState(false)
+    const router = useRouter()
 
     useEffect(() => {
         async function checkUserLevel() {
@@ -47,10 +52,32 @@ export default function DashboardCarCard(props: DashboardCarCard) {
     // Format kilometer with dots
     const formatKilometer = new Intl.NumberFormat('id-ID').format(props.kilometer);
 
+    const handleDelete = async () => {
+        if (window.confirm('Are you sure you want to delete this car?')) {
+            setIsDeleting(true);
+            try {
+                const result = await deleteCarById(props.id);
+                if (result.success) {
+                    window.location.reload();
+                } else {
+                    alert(result.error || 'Failed to delete car');
+                }
+            } catch (error) {
+                alert('An error occurred while deleting the car');
+            } finally {
+                setIsDeleting(false);
+            }
+        }
+    };
+
+    const handleEdit = () => {
+        router.push(`/editMobil/${props.id}`);
+    };
+
     return (
         <>
-            <div className="card bg-base-100 w-full md:w-80 shadow-xl hover:shadow-2xl transition-shadow duration-300">
-                <figure className="relative w-full h-48 overflow-hidden">
+            <div className="card bg-base-100 w-64 md:w-80 shadow-xl hover:shadow-2xl transition-shadow duration-300">
+                <figure className="relative h-48 overflow-hidden">
                     <img
                         src={props.image_url}
                         alt={`${props.merk} ${props.model}`}
@@ -97,15 +124,35 @@ export default function DashboardCarCard(props: DashboardCarCard) {
                         </div>
                     </div>
                     
-                    <div className="flex items-center justify-between mt-2">
+                    <div className="flex flex-col justify-between mt-2">
                         <p className="text-lg font-bold text-primary">{formatHargaJual}</p>
-                        <button 
-                            className="btn btn-primary btn-sm"
-                            onClick={() => setIsModalOpen(true)}
-                            disabled={props.status === 'Terjual' || userLevel !== 'admin'}
-                        >
-                            {props.status === 'Terjual' ? 'Terjual' : 'Mark as Sold'}
-                        </button>
+                        <div className="flex gap-2">
+                            <button 
+                                className="btn btn-primary btn-sm"
+                                onClick={() => setIsModalOpen(true)}
+                                disabled={props.status === 'Terjual' || userLevel !== 'admin'}
+                            >
+                                {props.status === 'Terjual' ? 'Terjual' : 'Mark as Sold'}
+                            </button>
+                            {userLevel === 'admin' && (
+                                <>
+                                    <button
+                                        className="btn btn-warning btn-sm"
+                                        onClick={handleEdit}
+                                        disabled={isDeleting}
+                                    >
+                                        <FaEdit />
+                                    </button>
+                                    <button
+                                        className="btn btn-error btn-sm"
+                                        onClick={handleDelete}
+                                        disabled={isDeleting || props.status === 'Terjual'}
+                                    >
+                                        <FaTrash />
+                                    </button>
+                                </>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>

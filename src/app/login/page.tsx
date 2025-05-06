@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { signInWithGoogle, getUserSession, isUserApproved } from '@/app/lib/auth';
 
@@ -9,14 +9,21 @@ export default function Login() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
+    // Check for error message in URL
+    const errorMessage = searchParams.get('error');
+    if (errorMessage) {
+      setError(errorMessage);
+    }
+
     const checkSession = async () => {
       const { session, error } = await getUserSession();
-      
+
       if (session) {
         const { isApproved, level, error: approvalError } = await isUserApproved();
-        
+
         if (approvalError) {
           setError(approvalError.message);
           return;
@@ -24,29 +31,27 @@ export default function Login() {
 
         if (isApproved) {
           // Redirect based on user level
-          if (level === 'admin') {
-            router.push('/admin/pending-users');
-          } else {
-            router.push('/dashboard');
-          }
+
+          router.push('/dashboard');
+
         } else {
-          router.push('/auth/pending');
+          setError('You are not approved to access this app, contact admin');
         }
       }
     };
 
     checkSession();
-  }, [router]);
+  }, [router, searchParams]);
 
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
     setError(null);
-    
+
     try {
       const { data, error } = await signInWithGoogle();
-      
+
       if (error) throw error;
-      
+
       // No need to redirect here as OAuth will handle the redirect
     } catch (error: any) {
       setError(error.message || 'Failed to sign in with Google');
@@ -76,8 +81,8 @@ export default function Login() {
                 </svg>
               </div>
             </motion.div>
-            
-            <motion.h2 
+
+            <motion.h2
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.2, duration: 0.5 }}
@@ -85,8 +90,8 @@ export default function Login() {
             >
               Welcome
             </motion.h2>
-            
-            <motion.p 
+
+            <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.3, duration: 0.5 }}

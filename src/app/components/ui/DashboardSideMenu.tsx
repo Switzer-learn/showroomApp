@@ -38,7 +38,7 @@ export default function DashboardSideMenu() {
         <div className="drawer md:drawer-open w-64">
             {/* Mobile toggle button */}
             <input id="dashboard-drawer" type="checkbox" className="drawer-toggle" />
-            <div className="drawer-content flex flex-col">
+            <div className="drawer-content flex flex-col w-screen md:w-64">
                 {/* Mobile navbar */}
                 <div className="navbar bg-base-200 md:hidden px-4">
                     <div className="flex-1 text-xl font-bold">Dashboard</div>
