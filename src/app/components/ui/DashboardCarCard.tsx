@@ -76,7 +76,7 @@ export default function DashboardCarCard(props: DashboardCarCard) {
 
     return (
         <>
-            <div className="card bg-base-100 w-64 md:w-80 shadow-xl hover:shadow-2xl transition-shadow duration-300">
+            <div className="card bg-base-100 w-full md:w-80 shadow-xl hover:shadow-2xl transition-shadow duration-300">
                 <figure className="relative h-48 overflow-hidden">
                     <img
                         src={props.image_url}
