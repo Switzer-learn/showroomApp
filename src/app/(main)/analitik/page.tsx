@@ -139,12 +139,14 @@ export default function AnalitikPage() {
   const [monthlySales, setMonthlySales] = useState<MonthlySales[]>([]);
   const [timeFrame, setTimeFrame] = useState<'week' | 'month' | 'year'>('year');
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
+  const [hasData, setHasData] = useState<boolean | null>(null); // null: initial/loading, true: has data, false: no data/error
 
   // Fetch data from Supabase
   useEffect(() => {
     async function fetchData() {
       try {
         setLoading(true);
+        setHasData(null); // Reset while fetching
         const supabase = createClient();
 
         // Get date range based on timeFrame
@@ -171,7 +173,7 @@ export default function AnalitikPage() {
           .gte('tanggal_jual', startDate.toISOString()) as { data: SalesData[] | null, error: any };
 
         if (salesError) throw salesError;
-
+        
         // Process sales data
         const salesMap = new Map();
         salesData?.forEach(sale => {
@@ -205,7 +207,7 @@ export default function AnalitikPage() {
           }
         });
 
-        setSalesPerformance(Array.from(salesMap.values()));
+        const fetchedSalesPerformance = Array.from(salesMap.values());
 
         // 2. Brand Distribution
         const { data: brandData, error: brandError } = await supabase
@@ -220,12 +222,10 @@ export default function AnalitikPage() {
           return acc;
         }, {} as Record<string, number>);
 
-        setBrandDistribution(
-          Object.entries(brandCount || {}).map(([merk, count]) => ({
-            merk,
-            count
-          }))
-        );
+        const fetchedBrandDistribution = Object.entries(brandCount || {}).map(([merk, count]) => ({
+          merk,
+          count
+        }));
 
         // 3. Series Distribution
         const { data: seriesData, error: seriesError } = await supabase
@@ -240,12 +240,10 @@ export default function AnalitikPage() {
           return acc;
         }, {} as Record<string, number>);
 
-        setSeriesDistribution(
-          Object.entries(seriesCount || {}).map(([series, count]) => ({
-            series,
-            count
-          }))
-        );
+        const fetchedSeriesDistribution = Object.entries(seriesCount || {}).map(([series, count]) => ({
+          series,
+          count
+        }));
 
         // 4. Body Type Distribution
         const { data: bodyTypeData, error: bodyTypeError } = await supabase
@@ -260,12 +258,10 @@ export default function AnalitikPage() {
           return acc;
         }, {} as Record<string, number>);
 
-        setBodyTypeDistribution(
-          Object.entries(bodyTypeCount || {}).map(([body_type, count]) => ({
-            body_type,
-            count
-          }))
-        );
+        const fetchedBodyTypeDistribution = Object.entries(bodyTypeCount || {}).map(([body_type, count]) => ({
+          body_type,
+          count
+        }));
 
         // 5. Monthly Revenue and Profit
         const { data: monthlyData, error: monthlyError } = await supabase
@@ -304,33 +300,66 @@ export default function AnalitikPage() {
           }
         });
 
-        setMonthlyRevenue(Array.from(monthlyMap.values()));
+        const fetchedMonthlyRevenue = Array.from(monthlyMap.values());
 
         // 6. Calculate Profit & Loss
-        const totalRevenue = monthlyData?.reduce((sum, sale) => 
+        const fetchedTotalRevenue = monthlyData?.reduce((sum, sale) => 
           sum + (sale.mobil?.harga_jual || 0), 0) || 0;
-        const totalCost = monthlyData?.reduce((sum, sale) => 
+        const fetchedTotalCost = monthlyData?.reduce((sum, sale) => 
           sum + (sale.mobil?.harga_beli || 0), 0) || 0;
-        const grossProfit = totalRevenue - totalCost;
-        const profitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+        const fetchedGrossProfit = fetchedTotalRevenue - fetchedTotalCost;
+        const fetchedProfitMargin = fetchedTotalRevenue > 0 ? (fetchedGrossProfit / fetchedTotalRevenue) * 100 : 0;
 
-        setProfitLoss({
-          total_revenue: totalRevenue,
-          total_cost: totalCost,
-          gross_profit: grossProfit,
-          profit_margin: profitMargin
-        });
+        const fetchedProfitLoss = {
+          total_revenue: fetchedTotalRevenue,
+          total_cost: fetchedTotalCost,
+          gross_profit: fetchedGrossProfit,
+          profit_margin: fetchedProfitMargin
+        };
 
         // Fetch monthly sales data
-        const monthlySalesData = await getMonthlySalesData(timeFrame);
-        setMonthlySales(monthlySalesData);
+        const fetchedMonthlySales = await getMonthlySalesData(timeFrame);
 
         // Fetch analytics data
-        const analytics = await getAnalyticsData();
-        setAnalyticsData(analytics);
+        const fetchedAnalyticsData = await getAnalyticsData();
+
+        // Set all states with fetched data
+        setSalesPerformance(fetchedSalesPerformance);
+        setBrandDistribution(fetchedBrandDistribution);
+        setSeriesDistribution(fetchedSeriesDistribution);
+        setBodyTypeDistribution(fetchedBodyTypeDistribution);
+        setMonthlyRevenue(fetchedMonthlyRevenue);
+        setProfitLoss(fetchedProfitLoss);
+        setMonthlySales(fetchedMonthlySales);
+        setAnalyticsData(fetchedAnalyticsData);
+
+        // Determine if there's actual data to show
+        const isAnalyticsEffectivelyEmpty =
+          !fetchedAnalyticsData || // Case 1: The entire analytics object is missing
+          ( // Case 2: Analytics object exists, but indicates no meaningful sales activity
+            fetchedAnalyticsData.summary.total_revenue === 0 &&
+            (!fetchedAnalyticsData.sales_by_month || fetchedAnalyticsData.sales_by_month.length === 0) &&
+            (!fetchedAnalyticsData.top_5_best_sellers || fetchedAnalyticsData.top_5_best_sellers.length === 0) &&
+            (fetchedAnalyticsData.avg_days_to_sell === null || fetchedAnalyticsData.avg_days_to_sell === 0) &&
+            (!fetchedAnalyticsData.unsold_over_90_days || fetchedAnalyticsData.unsold_over_90_days.length === 0)
+          );
+
+        if (isAnalyticsEffectivelyEmpty) {
+          // If primary analytics data (fetchedAnalyticsData) indicates no significant activity,
+          // treat the page as having no data, even if other minor data points (like inventory count) exist.
+          setHasData(false);
+        } else {
+          // Otherwise, there's some data to show.
+          setHasData(true);
+        }
 
       } catch (error) {
         console.error('Error fetching data:', error);
+        setHasData(false); // Treat error as no data for display purposes
+        // Clear data states to prevent rendering with stale or partial data
+        setAnalyticsData(null); setSalesPerformance([]); setBrandDistribution([]);
+        setSeriesDistribution([]); setTypeDistribution([]); setMonthlyRevenue([]);
+        setProfitLoss(null); setBodyTypeDistribution([]); setMonthlySales([]);
       } finally {
         setLoading(false);
       }
@@ -706,11 +735,11 @@ export default function AnalitikPage() {
 
   // Add new chart for top 5 best sellers
   const bestSellersData = {
-    labels: analyticsData?.top_5_best_sellers.map(item => `${item.merk} ${item.series}`) || [],
+    labels: analyticsData?.top_5_best_sellers?.map(item => `${item.merk} ${item.series}`) || [],
     datasets: [
       {
         label: 'Units Sold',
-        data: analyticsData?.top_5_best_sellers.map(item => item.units_sold) || [],
+        data: analyticsData?.top_5_best_sellers?.map(item => item.units_sold) || [],
         backgroundColor: 'rgba(75, 192, 192, 0.6)',
         borderColor: 'rgba(75, 192, 192, 1)',
         borderWidth: 1,
@@ -777,6 +806,16 @@ export default function AnalitikPage() {
     );
   }
 
+  // After loading, check if there's data to display
+  if (hasData === false) {
+    return (
+      <div className="flex justify-center items-center h-screen bg-gray-900 text-white text-xl">
+        No data currently here
+      </div>
+    );
+  }
+
+  // If loading is false and hasData is true (or null initially, handled by loading)
   return (
     <div className="container mx-auto px-4 py-8 bg-gray-900 text-gray-100 min-h-screen">
       <div className="mb-8">
