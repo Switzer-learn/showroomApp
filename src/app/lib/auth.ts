@@ -14,6 +14,7 @@ export async function signInWithGoogle(redirectTo: string = "/dashboard") {
       },
     });
     if (error) throw error;
+    console.log("Google sign in data:", data);
     return { data, error: null };
   } catch (error: any) {
     console.error("Google sign in error:", error);

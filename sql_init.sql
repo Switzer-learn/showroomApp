@@ -214,7 +214,7 @@ as $$
         )
       end as profit_margin
     from penjualan p
-    join mobil m on p.id_mobil = m.id
+    join mobil m on p.mobil_id = m.id
   ),
   sales_by_month as (
     select
@@ -231,7 +231,7 @@ as $$
       m.series,
       count(*) as units_sold
     from penjualan p
-    join mobil m on p.id_mobil = m.id
+    join mobil m on p.mobil_id = m.id
     group by m.merk, m.series
     order by units_sold desc
     limit 5
@@ -240,7 +240,7 @@ as $$
     select
       avg(extract(day from p.created_at - m.created_at)) as avg_days
     from penjualan p
-    join mobil m on p.id_mobil = m.id
+    join mobil m on p.mobil_id = m.id
   ),
   unsold_over_90_days as (
     select
@@ -249,7 +249,7 @@ as $$
       m.series,
       extract(day from now() - m.created_at) as age
     from mobil m
-    where m.id not in (select id_mobil from penjualan)
+    where m.id not in (select mobil_id from penjualan)
     and now() - m.created_at > interval '90 days'
   )
   select json_build_object(

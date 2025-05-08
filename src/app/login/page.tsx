@@ -17,7 +17,7 @@ function LoginContent() {
     const errorMessage = searchParams.get('error');
     if (errorMessage) {
       setError(errorMessage);
-      router.replace('/login',{scroll:false});
+      //router.replace('/login',{scroll:false});
     }
 
     const checkSession = async () => {
@@ -35,7 +35,7 @@ function LoginContent() {
           // Redirect based on user level
           router.push('/dashboard');
         } else {
-          setError('You are not approved to access this app, contact admin');
+          router.push("/auth/pending")
         }
       }
     };
