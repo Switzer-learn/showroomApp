@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { CarInterface } from "@/app/type/car/carInterface"
 import DashboardCarCard from "@/app/components/ui/DashboardCarCard"
 import { createClient } from "@/app/utils/supabase/client"
@@ -148,45 +148,69 @@ export default function Dashboard() {
         fetchUniqueValues();
     }, [router])
 
-    // Fetch cars with filters
-    useEffect(() => {
-        async function fetchCars() {
-            setLoading(true)
-            const supabase = createClient()
-            
-            let query = supabase
-                .from('mobil')
-                .select('*')
-                .order(sortOption.field, { ascending: sortOption.direction === 'asc' })
+    const fetchCars = useCallback(async () => {
+        setLoading(true);
+        const supabase = createClient();
+        
+        let query = supabase
+            .from('mobil')
+            .select('*')
+            .order(sortOption.field, { ascending: sortOption.direction === 'asc' });
 
-            // Apply filters
-            if (filters.merk) query = query.eq('merk', filters.merk)
-            if (filters.body_type) query = query.eq('body_type', filters.body_type)
-            if (filters.status) query = query.eq('status', filters.status)
-            if (filters.transmisi) query = query.eq('transmisi', filters.transmisi)
-            if (filters.kondisi) query = query.eq('kondisi', filters.kondisi)
-            if (filters.minHarga) query = query.gte('harga_jual', parseInt(filters.minHarga))
-            if (filters.maxHarga) query = query.lte('harga_jual', parseInt(filters.maxHarga))
-            if (filters.searchQuery) {
-                query = query.or(`merk.ilike.%${filters.searchQuery}%,model.ilike.%${filters.searchQuery}%,series.ilike.%${filters.searchQuery}%`)
-            }
-
-            try {
-                const { data, error } = await query
-                if (error) {
-                    console.error('Error fetching cars:', error)
-                    return
-                }
-                setCarData(data || [])
-            } catch (err) {
-                console.error('Exception fetching cars:', err)
-            } finally {
-                setLoading(false)
-            }
+        // Apply filters
+        if (filters.merk) query = query.eq('merk', filters.merk);
+        if (filters.body_type) query = query.eq('body_type', filters.body_type);
+        if (filters.status) query = query.eq('status', filters.status);
+        if (filters.transmisi) query = query.eq('transmisi', filters.transmisi);
+        if (filters.kondisi) query = query.eq('kondisi', filters.kondisi);
+        if (filters.minHarga) query = query.gte('harga_jual', parseInt(filters.minHarga));
+        if (filters.maxHarga) query = query.lte('harga_jual', parseInt(filters.maxHarga));
+        if (filters.searchQuery) {
+            query = query.or(`merk.ilike.%${filters.searchQuery}%,model.ilike.%${filters.searchQuery}%,series.ilike.%${filters.searchQuery}%`);
         }
 
-        fetchCars()
-    }, [filters, sortOption])
+        try {
+            const { data, error } = await query;
+            if (error) {
+                console.error('Error fetching cars:', error);
+                setCarData([]); // Set to empty array on error
+                return;
+            }
+            setCarData(data || []);
+        } catch (err) {
+            console.error('Exception fetching cars:', err);
+            setCarData([]); // Set to empty array on exception
+        } finally {
+            setLoading(false);
+        }
+    }, [filters, sortOption]); // Dependencies: filters and sortOption. setLoading and setCarData are stable.
+
+    // Effect for initial fetch and re-fetch when filters/sortOption change
+    useEffect(() => {
+        fetchCars();
+    }, [fetchCars]);
+
+    // Effect for Supabase Realtime subscription
+    useEffect(() => {
+        const supabase = createClient();
+        const channel = supabase
+            .channel('mobil-realtime')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'mobil' },
+                (payload) => {
+                    console.log('Realtime change received on mobil table:', payload);
+                    // Re-fetch data to apply current filters and sorting
+                    fetchCars();
+                }
+            )
+            .subscribe();
+
+        return () => {
+            console.log('Removing mobil-realtime channel subscription');
+            supabase.removeChannel(channel);
+        };
+    }, [fetchCars]); // Re-subscribe if fetchCars function instance changes
 
     const handleFilterChange = (key: keyof FilterState, value: string) => {
         setFilters(prev => ({
