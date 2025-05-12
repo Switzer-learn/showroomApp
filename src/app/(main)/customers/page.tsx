@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from "../../utils/supabase/client"
 import TransactionModal from './TransactionModal';
 import { Customer, Transaction } from './types';
 
@@ -12,7 +12,7 @@ export default function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [showModal, setShowModal] = useState(false);
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   useEffect(() => {
     fetchCustomers();
@@ -24,7 +24,8 @@ export default function CustomersPage() {
         .from('customers')
         .select('*')
         .order('created_at', { ascending: false });
-
+      console.log(data);
+      console.log(error);
       if (error) throw error;
       setCustomers(data || []);
     } catch (err: any) {
@@ -81,7 +82,7 @@ export default function CustomersPage() {
     <div className="container mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-6">Customer Management</h1>
       
-      <div className="overflow-x-auto bg-white rounded-lg shadow">
+      <div className="overflow-x-auto text-white rounded-lg shadow">
         <table className="table table-zebra w-full">
           <thead>
             <tr>
