@@ -88,6 +88,12 @@ export default function DashboardSideMenu() {
                                     </Link>
                                 </li>
                                 <li>
+                                    <Link href="/customers" className="flex items-center gap-2">
+                                        <FaUsers />
+                                        Customers Data
+                                    </Link>
+                                </li>
+                                <li>
                                     <Link href="/admin/pending-users" className="flex items-center gap-2">
                                         <FaUsers />
                                         Pending Users
