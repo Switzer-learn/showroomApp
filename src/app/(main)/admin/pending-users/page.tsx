@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/app/utils/supabase/client'
-import { getUserLevel } from '@/app/lib/dbFunction'
+import { getUserLevelAction } from "@/app/actions/userActions"
 import { toast } from 'react-hot-toast'
 
 interface User {
@@ -31,7 +31,7 @@ export default function PendingUsersPage() {
         return
       }
 
-      const level = await getUserLevel(user.id)
+      const level = await getUserLevelAction(user.id)
       if (level !== 'admin') {
         router.push('/dashboard')
       }

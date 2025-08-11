@@ -18,16 +18,6 @@ DROP TABLE IF EXISTS customers;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS pending_users;
 
--- Tabel Pending Users (for new registrations)
-CREATE TABLE pending_users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email TEXT NOT NULL UNIQUE,
-    nama TEXT,
-    no_hp TEXT,
-    approved BOOLEAN DEFAULT FALSE,
-    level TEXT CHECK (level IN ('admin', 'sales')),
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
 
 -- Tabel Users (Admin & Sales)
 CREATE TABLE users (
@@ -57,22 +47,22 @@ CREATE TABLE mobil (
   tipe TEXT NOT NULL,
   model TEXT NOT NULL,
   series TEXT,
-  body_type TEXT NOT NULL CHECK (body_type IN ('Sedan', 'SUV', 'MPV', 'Hatchback', 'Pickup', 'Van')),
+  body_type TEXT NOT NULL,
   variation TEXT,
-  tahun INTEGER NOT NULL,
+  tahun NUMERIC NOT NULL,
   plat_nomor TEXT NOT NULL,
   warna TEXT NOT NULL,
-  transmisi TEXT NOT NULL CHECK (transmisi IN ('Manual', 'Otomatis')),
-  bahan_bakar TEXT NOT NULL CHECK (bahan_bakar IN ('Bensin', 'Diesel', 'Listrik')),
-  kondisi TEXT NOT NULL CHECK (kondisi IN ('Sangat Baik', 'Baik', 'Cukup', 'Rusak Ringan')),
-  kilometer INTEGER NOT NULL,
-  harga_beli INTEGER NOT NULL,
-  harga_jual INTEGER,
+  transmisi TEXT NOT,
+  bahan_bakar TEXT NOT NULL,
+  kondisi TEXT NOT NULL,
+  kilometer NUMERIC NOT NULL,
+  harga_beli NUMERIC NOT NULL,
+  harga_jual NUMERIC,
   tanggal_beli DATE NOT NULL,
   deskripsi TEXT,
   status TEXT NOT NULL CHECK (status IN ('Tersedia', 'Terjual')),
   image_url TEXT,
-  previous_owners INTEGER DEFAULT 1,
+  previous_owners NUMERIC DEFAULT 1,
   registration_expiry DATE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT unique_plat_nomor UNIQUE (plat_nomor)
@@ -89,11 +79,11 @@ CREATE TABLE penjualan (
   nomor_hp_pembeli TEXT NOT NULL,
   metode_pembayaran TEXT NOT NULL CHECK (metode_pembayaran IN ('Tunai', 'Kredit')),
   nama_leasing TEXT,
-  uang_muka INTEGER,
-  harga_kredit INTEGER,
-  dana_dari_leasing INTEGER,
+  uang_muka NUMERIC,
+  harga_kredit NUMERIC,
+  dana_dari_leasing NUMERIC,
   tanggal_jual DATE NOT NULL,
-  total_harga INTEGER NOT NULL,
+  total_harga NUMERIC NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -2,17 +2,223 @@
 import { cookies } from 'next/headers';
 import { createClient } from '../utils/supabase/server';
 
-export async function getAllCarDetail() {
-    const cookieStore = cookies();
-    const supabase = await createClient(cookieStore);
-    const { data, error } = await supabase
-        .from('mobil')
-        .select('*')
+/**
+ * Helpers
+ */
+async function withCompanyScopedClient() {
+  const cookieStore = cookies();
+  const supabase = await createClient(cookieStore);
+  // Get session user to infer company scope if needed via RLS or profile
+  const { data: { user } } = await supabase.auth.getUser();
+  return { supabase, user };
+}
 
-    if(error){
-        return null;
-    }
-    return data;
+/**
+ * Inventory services
+ */
+export async function listCars() {
+  const { supabase } = await withCompanyScopedClient();
+  // Assuming RLS scopes by company_id automatically
+  const { data, error } = await supabase.from('cars').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function createCar(payload: any) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.from('cars').insert(payload).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateCar(id: string, patch: any) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.from('cars').update(patch).eq('id', id).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteCar(id: string) {
+  const { supabase } = await withCompanyScopedClient();
+  const { error } = await supabase.from('cars').delete().eq('id', id);
+  if (error) throw error;
+  return { success: true };
+}
+
+export async function uploadAttachment(file: File, path: string) {
+  const { supabase } = await withCompanyScopedClient();
+  // Upload to existing bucket "gambar-mobil"
+  const { data, error } = await supabase.storage.from('gambar-mobil').upload(path, file, {
+    upsert: false,
+    cacheControl: '3600',
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Sales services
+ */
+export async function createCustomer(payload: {
+  nama: string;
+  no_hp?: string;
+  alamat?: string;
+  jenis_kelamin?: 'Laki-laki' | 'Perempuan';
+}) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.from('customers').insert(payload).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+export async function createSale(payload: {
+  company_id?: string;
+  car_id: string;
+  customer_id: string;
+  sale_price: number;
+  payment_method: string;
+  sale_date: string;
+  salesperson_id?: string;
+}) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.from('sales').insert(payload).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+export async function listSales(params?: { startDate?: string; endDate?: string }) {
+  const { supabase } = await withCompanyScopedClient();
+  let query = supabase.from('sales').select('*').order('sale_date', { ascending: false });
+  if (params?.startDate) query = query.gte('sale_date', params.startDate);
+  if (params?.endDate) query = query.lte('sale_date', params.endDate);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Purchases services
+ */
+export async function createPurchase(payload: {
+  company_id?: string;
+  car_id: string;
+  buy_price: number;
+  payment_method: string;
+  purchase_date: string;
+  vendor_source?: string;
+}) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.from('purchases').insert(payload).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+export async function listPurchases(params?: { startDate?: string; endDate?: string }) {
+  const { supabase } = await withCompanyScopedClient();
+  let query = supabase.from('purchases').select('*').order('purchase_date', { ascending: false });
+  if (params?.startDate) query = query.gte('purchase_date', params.startDate);
+  if (params?.endDate) query = query.lte('purchase_date', params.endDate);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Accounting services
+ */
+export async function getJournal(params: { startDate: string; endDate: string }) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase
+    .from('v_journal_entries')
+    .select('*')
+    .gte('transaction_date', params.startDate)
+    .lte('transaction_date', params.endDate)
+    .order('transaction_date', { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+export async function getLedger(params: { startDate: string; endDate: string }) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase
+    .from('v_ledger_entries')
+    .select('*')
+    .gte('transaction_date', params.startDate)
+    .lte('transaction_date', params.endDate)
+    .order('account_code', { ascending: true })
+    .order('transaction_date', { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+export async function getProfitAndLoss(params: { startDate: string; endDate: string }) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.rpc('fn_pnl_mtd', {
+    start_date: params.startDate,
+    end_date: params.endDate,
+  });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getBalanceSheet(params: { endDate: string }) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.rpc('fn_balance_sheet_latest', {
+    end_date: params.endDate,
+  });
+  if (error) throw error;
+  return data ?? [];
+}
+
+/**
+ * Analytics services
+ */
+export async function getUpcomingSTNKExpirations() {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.from('upcoming_stnk_expirations').select('*').order('expires_at', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function salesTrends(params: { timeFrame: 'week' | 'month' | 'year' }) {
+  // Keep existing getMonthlySalesData for now; alias to new name
+  return await getMonthlySalesData(params.timeFrame);
+}
+
+export async function avgDaysToSell() {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.rpc('fn_avg_days_to_sell');
+  if (error) throw error;
+  return data ?? 0;
+}
+
+/**
+ * Storage helpers for public URL and setting image on records
+ */
+export async function storagePublicUrl(path: string): Promise<string> {
+  const { supabase } = await withCompanyScopedClient();
+  const { data } = supabase.storage.from('gambar-mobil').getPublicUrl(path);
+  return data.publicUrl;
+}
+
+/**
+ * Set image_url for new cars schema
+ */
+export async function setCarImageUrl(carId: string, publicUrl: string) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.from('cars').update({ image_url: publicUrl }).eq('id', carId).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Legacy: Set image_url for mobil table (kept for compatibility)
+ */
+export async function setMobilImageUrl(mobilId: string, publicUrl: string) {
+  const { supabase } = await withCompanyScopedClient();
+  const { data, error } = await supabase.from('mobil').update({ image_url: publicUrl }).eq('id', mobilId).select('*').single();
+  if (error) throw error;
+  return data;
 }
 
 
@@ -22,71 +228,53 @@ export async function createClientWithCookies() {
     return supabase;
 }
 
+/**
+ * Legacy insert (mobil) retained to avoid breaking current flows.
+ * Prefer createCar + uploadAttachment going forward.
+ */
 export async function insertCarData(formData: any, imageFile: File | null) {
-    
     const supabase = await createClientWithCookies();
-    console.log(formData)
     try {
-        let imageUrl = null;
-        
-        // Upload image if exists
-        if (imageFile) {
+        const { data: insertedData, error: insertError } = await supabase
+            .from('mobil')
+            .insert([{ ...formData, image_url: null }])
+            .select()
+            .single();
+        if (insertError) throw insertError;
+
+        let imageUrl: string | null = null;
+        if (imageFile && insertedData?.id) {
             const fileExt = imageFile.name.split('.').pop();
-            const fileName = `${Math.random()}.${fileExt}`;
-            const { data: uploadData, error: uploadError } = await supabase.storage
+            const fileName = `${insertedData.id}.${fileExt}`;
+            const { error: uploadError } = await supabase.storage
                 .from('gambar-mobil')
                 .upload(fileName, imageFile);
-
-            if (uploadError) throw uploadError;
-            
-            // Get public URL
-            const { data: { publicUrl } } = supabase.storage
-                .from('gambar-mobil')
-                .getPublicUrl(fileName);
-                
+            if (uploadError) {
+                await supabase.from('mobil').delete().eq('id', insertedData.id);
+                throw uploadError;
+            }
+            const { data: { publicUrl } } = supabase.storage.from('gambar-mobil').getPublicUrl(fileName);
             imageUrl = publicUrl;
+            const { error: updateError } = await supabase.from('mobil').update({ image_url: imageUrl }).eq('id', insertedData.id);
+            if (updateError) throw updateError;
         }
-
-        // Insert car data
-        const { data, error } = await supabase
-            .from('mobil')
-            .insert([{
-                ...formData,
-                image_url: imageUrl
-            }])
-            .select();
-
-        if (error) throw error;
-        return { success: true, data };
+        return { success: true, data: insertedData };
     } catch (error) {
         console.error('Error:', error);
         return { success: false, error };
     }
 }
 
+/**
+ * Legacy penjualan flow retained; to be replaced by createSale and DB triggers.
+ */
 export async function insertPenjualanMobil(
-    carData: {
-        id: string;
-        harga_jual: number;
-    },
-    customerData: {
-        nama: string;
-        no_hp: string;
-        alamat: string;
-        jenis_kelamin: 'Laki-laki' | 'Perempuan';
-    },
-    paymentData: {
-        metode_pembayaran: 'Tunai' | 'Kredit';
-        uang_muka: number;
-        nama_leasing: string;
-        harga_kredit: number;
-        dana_dari_leasing: number;
-    }
+    carData: { id: string; harga_jual: number; },
+    customerData: { nama: string; no_hp: string; alamat: string; jenis_kelamin: 'Laki-laki' | 'Perempuan'; },
+    paymentData: { metode_pembayaran: 'Tunai' | 'Kredit'; uang_muka: number; nama_leasing: string; harga_kredit: number; dana_dari_leasing: number; }
 ) {
     const supabase = await createClientWithCookies();
-    
     try {
-        // Start a transaction
         const { data: customer, error: customerError } = await supabase
             .from('customers')
             .insert([{
@@ -97,10 +285,8 @@ export async function insertPenjualanMobil(
             }])
             .select()
             .single();
-
         if (customerError) throw customerError;
 
-        // Insert penjualan data
         const { data: penjualan, error: penjualanError } = await supabase
             .from('penjualan')
             .insert([{
@@ -119,15 +305,9 @@ export async function insertPenjualanMobil(
             }])
             .select()
             .single();
-
         if (penjualanError) throw penjualanError;
 
-        // Update mobil status to 'Terjual'
-        const { error: updateError } = await supabase
-            .from('mobil')
-            .update({ status: 'Terjual' })
-            .eq('id', carData.id);
-
+        const { error: updateError } = await supabase.from('mobil').update({ status: 'Terjual' }).eq('id', carData.id);
         if (updateError) throw updateError;
 
         return { success: true, data: { customer, penjualan } };
@@ -139,48 +319,30 @@ export async function insertPenjualanMobil(
 
 export async function getMonthlySalesData(timeFrame: 'week' | 'month' | 'year') {
     const supabase = await createClientWithCookies();
-    
-    // Get date range based on timeFrame
     const now = new Date();
     let startDate = new Date();
-    if (timeFrame === 'week') {
-        startDate.setDate(now.getDate() - 7);
-    } else if (timeFrame === 'month') {
-        startDate.setMonth(now.getMonth() - 1);
-    } else { // year
-        startDate.setFullYear(now.getFullYear() - 1);
-    }
+    if (timeFrame === 'week') startDate.setDate(now.getDate() - 7);
+    else if (timeFrame === 'month') startDate.setMonth(now.getMonth() - 1);
+    else startDate.setFullYear(now.getFullYear() - 1);
 
     const { data, error } = await supabase
-        .from('penjualan')
-        .select(`
-            tanggal_jual,
-            mobil_id
-        `)
-        .gte('tanggal_jual', startDate.toISOString())
-        .order('tanggal_jual', { ascending: true });
-
+        .from('sales')
+        .select(`sale_date, car_id`)
+        .gte('sale_date', startDate.toISOString())
+        .order('sale_date', { ascending: true });
     if (error) {
         console.error('Error fetching monthly sales data:', error);
         throw error;
     }
 
-    // Process data to get monthly counts
-    const monthlySales = new Map();
-    data?.forEach((sale: { tanggal_jual: string; mobil_id: string }) => {
-        const date = new Date(sale.tanggal_jual);
+    const monthlySales = new Map<string, number>();
+    data?.forEach((sale: { sale_date: string; car_id: string }) => {
+        const date = new Date(sale.sale_date);
         const monthKey = date.toLocaleString('default', { month: 'short' });
-        
-        if (!monthlySales.has(monthKey)) {
-            monthlySales.set(monthKey, 0);
-        }
-        monthlySales.set(monthKey, monthlySales.get(monthKey) + 1);
+        monthlySales.set(monthKey, (monthlySales.get(monthKey) ?? 0) + 1);
     });
 
-    return Array.from(monthlySales.entries()).map(([month, count]) => ({
-        month,
-        count
-    }));
+    return Array.from(monthlySales.entries()).map(([month, count]) => ({ month, count }));
 }
 
 interface AnalyticsData {
@@ -211,17 +373,15 @@ interface AnalyticsData {
 
 export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     const supabase = await createClientWithCookies();
-    
     try {
-        const { data, error } = await supabase
-            .rpc('analytics');
-        console.log(data)
+        const { data, error } = await supabase.rpc('analytics');
         if (error) {
             console.error('Error fetching analytics data:', error);
             return null;
         }
-
-        return JSON.parse(data);
+        // Ensure data is JSON object or stringified
+        const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        return parsed as AnalyticsData;
     } catch (error) {
         console.error('Error:', error);
         return null;

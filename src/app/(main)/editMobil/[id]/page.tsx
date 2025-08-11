@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/app/utils/supabase/client"
-import { getUserLevel } from "@/app/lib/dbFunction"
+import { getUserLevelAction } from "@/app/actions/userActions"
 import { Car } from "@/app/types/car"
 import { toast } from 'react-hot-toast'
 import { use } from "react"
@@ -52,7 +52,7 @@ export default function EditCarPage({ params }: { params: Promise<{ id: string }
             const supabase = createClient();
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-                const level = await getUserLevel(user.id);
+                const level = await getUserLevelAction(user.id);
                 setUserLevel(level);
                 if (level !== 'admin') {
                     router.push('/dashboard');

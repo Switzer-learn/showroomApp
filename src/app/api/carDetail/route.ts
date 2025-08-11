@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllCarDetail } from '@/app/lib/dbFunction';
+import { getAllCarDetail } from '@/app/utils/api-server';
 
 export async function GET() {
   try {

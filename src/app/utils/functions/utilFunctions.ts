@@ -1,4 +1,4 @@
-import { createClientWithCookies } from "@/app/lib/dbFunction";
+import { createClientWithCookies } from "@/app/utils/api-server";
 export async function handleSignOut() {
   const supabase = await createClientWithCookies();
   const { error } = await supabase.auth.signOut();

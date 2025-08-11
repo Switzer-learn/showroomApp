@@ -48,30 +48,41 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  // Check user approval status and level
+  // Check user approval status and company assignment
   const { data: userData, error: userError } = await supabase
     .from('users')
-    .select('approved, level')
+    .select('status, role, company_id')
     .eq('id', session.user.id)
     .single();
 
   if (userError || !userData) {
-    // If user not found in users table, they're not approved
+    // If user not found in users table, they're not authorized
     const redirectUrl = new URL('/login', request.url);
-    redirectUrl.searchParams.set('error', 'You are not approved to access this app, contact admin');
+    redirectUrl.searchParams.set('error', 'unauthorized');
     return NextResponse.redirect(redirectUrl);
   }
 
-  // If user is not approved, redirect to login with error
-  if (!userData.approved) {
-    const redirectUrl = new URL('/login', request.url);
-    redirectUrl.searchParams.set('error', 'You are not approved to access this app, contact admin');
-    return NextResponse.redirect(redirectUrl);
+  // If user has no company assigned, redirect to onboarding
+  if (!userData.company_id) {
+    if (path !== '/onboarding') {
+      const redirectUrl = new URL('/onboarding', request.url);
+      return NextResponse.redirect(redirectUrl);
+    }
+    return res;
   }
 
-  // Handle sales user restrictions
-  if (userData.level !== 'admin') {
-    // Sales users can only access dashboard
+  // If user is not active, redirect to pending
+  if (userData.status !== 'active') {
+    if (path !== '/auth/pending') {
+      const redirectUrl = new URL('/auth/pending', request.url);
+      return NextResponse.redirect(redirectUrl);
+    }
+    return res;
+  }
+
+  // Handle role-based access
+  if (userData.role !== 'admin') {
+    // Non-admin users can only access dashboard
     if (path !== '/dashboard') {
       const redirectUrl = new URL('/dashboard', request.url);
       return NextResponse.redirect(redirectUrl);

@@ -6,61 +6,73 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
   const code = requestUrl.searchParams.get('code')
   const next = requestUrl.searchParams.get('next') || '/dashboard'
-  console.log(code,next)
-  if (code) {
-    const cookieStore = cookies()
-    const supabase = await createClient(cookieStore)
 
-    try {
-      // Exchange the code for a session
-      const { data: { session }, error: sessionError } = await supabase.auth.exchangeCodeForSession(code)
-      console.log("authcallback",session);
-      if (sessionError) throw sessionError
-
-      if (session?.user) {
-        console.log("user exist in callback not in users table")
-        // Check if user already exists in users table
-        const { data: existingUser, error: userError } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', session.user.id)
-          .single()
-
-        if (userError && userError.code !== 'PGRST116') { // PGRST116 is "no rows returned"
-          throw userError
-        }
-
-        if (!existingUser) {
-          console.log("creating new user")
-          // Insert new user into users table
-          const { error: insertError } = await supabase
-            .from('users')
-            .insert([
-              {
-                id: session.user.id,
-                email: session.user.email,
-                nama: session.user.user_metadata?.full_name || null,
-                no_hp: session.user.user_metadata?.phone || null,
-                approved: false, // Default to false, admin needs to approve
-                level: 'sales', // Default to sales, admin can change to admin
-                created_at: new Date().toISOString()
-              }
-            ])
-            
-          if (insertError) throw insertError
-        }else{
-          console.log("user exist")
-        }
-
-        // Redirect to dashboard
-        return NextResponse.redirect(new URL(next, requestUrl.origin))
-      }
-    } catch (error) {
-      console.error('Auth callback error:', error)
-      return NextResponse.redirect(new URL('/auth/pending', requestUrl.origin))
-    }
+  if (!code) {
+    return NextResponse.redirect(new URL('/auth/error', requestUrl.origin))
   }
 
-  // Return the user to an error page with instructions
-  return NextResponse.redirect(new URL('/auth/pending', requestUrl.origin))
+  const cookieStore = cookies()
+  const supabase = await createClient(cookieStore)
+
+  try {
+    // Exchange code for session
+    console.log('Exchanging code for session:', code);
+    const { data: { session }, error: sessionError } =
+      await supabase.auth.exchangeCodeForSession(code)
+
+      console.log('Session received:', session)
+    if (sessionError) throw sessionError
+    if (!session?.user) throw new Error('No user returned from Google OAuth')
+
+    // Check if user exists in users table
+    const { data: existingUser, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', session.user.id)
+      .single()
+
+    if (userError && userError.code !== 'PGRST116') {
+      throw userError
+    }
+
+    if (!existingUser) {
+      // Create new user with no company assigned
+      console.log(session, 'Creating new user in users table')
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert([
+          {
+            id: session.user.id,
+            email: session.user.email,
+            role: 'member',             // default role
+            company_id: null,          // must join later
+            status: 'pending',      // pending company join
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ])
+
+      if (insertError) throw insertError
+
+      // Send new user to join company page
+      return NextResponse.redirect(new URL('/onboarding', requestUrl.origin))
+    }
+
+    // If user exists but no company assigned, send to join company page
+    if (!existingUser.company_id) {
+      return NextResponse.redirect(new URL('/onboarding', requestUrl.origin))
+    }
+
+    // If user is approved, go to dashboard
+    if (existingUser.status === 'active') {
+      return NextResponse.redirect(new URL(next, requestUrl.origin))
+    }
+
+    // Otherwise, show pending approval page
+    return NextResponse.redirect(new URL('/auth/pending', requestUrl.origin))
+
+  } catch (error) {
+    console.error('Auth callback error:', error)
+    return NextResponse.redirect(new URL('/auth/error', requestUrl.origin))
+  }
 }
