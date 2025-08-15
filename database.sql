@@ -1,27 +1,34 @@
--- SQL Schema for Used Car Dealer App with Unified Transactions System
--- Multi-tenancy via company_id with Row Level Security (RLS)
--- ================================
--- RESET SCRIPT FOR USED CAR DEALER DB
--- ================================
+-- Refactored SQL schema for Used Car Dealer App
+-- Objective: avoid RLS infinite recursion by using JWT custom claims and SECURITY DEFINER functions
+-- Single copy-paste file. After running this migration you should configure Supabase to use
 
--- Drop triggers
+-- =====================================
+-- RESET (safe drop) - use to reset schema
+-- =====================================
+
+-- Drops in safe dependency order
 DROP TRIGGER IF EXISTS sale_transaction_trigger ON sales;
 DROP TRIGGER IF EXISTS purchase_transaction_trigger ON purchases;
 DROP TRIGGER IF EXISTS journal_items_immutable ON journal_items;
 DROP TRIGGER IF EXISTS trg_enforce_max_users ON users;
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+DROP TRIGGER IF EXISTS update_companies_updated_at ON companies;
+DROP TRIGGER IF EXISTS trg_activate_company_owner ON companies;
+DROP TRIGGER IF EXISTS trg_enforce_company_approval ON users;
 
--- Drop functions
 DROP FUNCTION IF EXISTS create_sale_transaction() CASCADE;
 DROP FUNCTION IF EXISTS create_purchase_transaction() CASCADE;
 DROP FUNCTION IF EXISTS get_coa_by_group_prefix(UUID, TEXT) CASCADE;
 DROP FUNCTION IF EXISTS get_upcoming_stnk_expirations(UUID) CASCADE;
 DROP FUNCTION IF EXISTS prevent_journal_update() CASCADE;
 DROP FUNCTION IF EXISTS enforce_max_users() CASCADE;
+DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
+DROP FUNCTION IF EXISTS activate_company_owner() CASCADE;
+DROP FUNCTION IF EXISTS enforce_company_approval_for_users() CASCADE;
+DROP FUNCTION IF EXISTS jwt_custom_claims() CASCADE;
 
--- Drop views
 DROP VIEW IF EXISTS upcoming_stnk_expirations;
 
--- Drop tables in dependency order
 DROP TABLE IF EXISTS journal_items CASCADE;
 DROP TABLE IF EXISTS transactions CASCADE;
 DROP TABLE IF EXISTS purchases CASCADE;
@@ -32,30 +39,44 @@ DROP TABLE IF EXISTS cars CASCADE;
 DROP TABLE IF EXISTS chart_of_accounts CASCADE;
 DROP TABLE IF EXISTS coa_groups CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
-DROP TABLE IF EXISTS settings CASCADE;
 DROP TABLE IF EXISTS companies CASCADE;
+--DROP TABLE IF EXISTS system_admins CASCADE;
 
--- Users Table
+-- =====================================
+-- Create system_admins (global platform admins)
+-- =====================================
 /*CREATE TABLE system_admins (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    auth_user_id UUID UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
-    email TEXT NOT NULL UNIQUE,
-    name TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  auth_user_id UUID UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL UNIQUE,
+  name TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );*/
+-- NOTE: We intentionally DO NOT create application-level policies for system_admins here.
+-- If you enable RLS on system_admins and add no policies, the app (authenticated role) cannot read/modify it.
 
+-- =====================================
+-- Companies (approved_by references system_admins)
+-- =====================================
 CREATE TABLE companies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    phone_number TEXT,
+    address TEXT,
     status TEXT CHECK (status IN ('pending_approval', 'active', 'suspended', 'rejected')) DEFAULT 'pending_approval',
     approved_by UUID REFERENCES system_admins(id),
     approved_at TIMESTAMPTZ,
     max_users INT DEFAULT 10,
     max_storage_mb INT DEFAULT 500,
+    settings JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- =====================================
+-- Users (tenant-scoped; linked to auth.users)
+-- =====================================
 CREATE TABLE users (
     id UUID PRIMARY KEY REFERENCES auth.users(id),
     company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
@@ -69,7 +90,9 @@ CREATE TABLE users (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- COA Groups Table
+-- =====================================
+-- Accounting & domain tables (unchanged structure)
+-- =====================================
 CREATE TABLE coa_groups (
     id SERIAL PRIMARY KEY,
     prefix TEXT NOT NULL UNIQUE,
@@ -78,7 +101,6 @@ CREATE TABLE coa_groups (
     auto_increment INTEGER DEFAULT 0
 );
 
--- Chart of Accounts Table
 CREATE TABLE chart_of_accounts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id UUID REFERENCES companies(id),
@@ -96,7 +118,6 @@ CREATE TABLE chart_of_accounts (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Cars Table
 CREATE TABLE cars (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id UUID REFERENCES companies(id),
@@ -123,7 +144,6 @@ CREATE TABLE cars (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Customers Table
 CREATE TABLE customers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id UUID REFERENCES companies(id),
@@ -136,7 +156,6 @@ CREATE TABLE customers (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Sales Table
 CREATE TABLE sales (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id UUID REFERENCES companies(id),
@@ -151,7 +170,6 @@ CREATE TABLE sales (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Purchases Table
 CREATE TABLE purchases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id UUID REFERENCES companies(id),
@@ -164,22 +182,20 @@ CREATE TABLE purchases (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Unified Transactions Table (replaces journal_entries)
 CREATE TABLE transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id UUID REFERENCES companies(id),
     transaction_date DATE,
-    transaction_type TEXT, -- 'sale', 'purchase', 'expense', 'tax', etc.
+    transaction_type TEXT,
     amount NUMERIC,
     description TEXT,
-    source_document TEXT, -- 'Sale', 'Purchase', 'Manual', 'Expense'
-    source_id UUID, -- Links to sales.id, purchases.id, etc.
+    source_document TEXT,
+    source_id UUID,
     is_corrected BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Journal Items Table (directly linked to transactions)
 CREATE TABLE journal_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_id UUID REFERENCES transactions(id),
@@ -192,7 +208,6 @@ CREATE TABLE journal_items (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Attachments Table
 CREATE TABLE attachments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id UUID REFERENCES companies(id),
@@ -203,8 +218,6 @@ CREATE TABLE attachments (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Settings Table
-CREATE TABLE settings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id UUID REFERENCES companies(id),
     key TEXT,
@@ -213,121 +226,61 @@ CREATE TABLE settings (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- RLS Policies (Row Level Security)
-ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE coa_groups ENABLE ROW LEVEL SECURITY;
-ALTER TABLE chart_of_accounts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE cars ENABLE ROW LEVEL SECURITY;
-ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sales ENABLE ROW LEVEL SECURITY;
-ALTER TABLE purchases ENABLE ROW LEVEL SECURITY;
-ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE journal_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE attachments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
-
--- Companies RLS Policies
-CREATE POLICY companies_policy ON companies
-FOR ALL USING (id IN (SELECT company_id FROM users WHERE id = auth.uid()));
-
--- COA Groups RLS Policies
-CREATE POLICY coa_groups_policy ON coa_groups
-FOR ALL USING (TRUE); -- COA groups are global/shared across all companies
-
--- Chart of Accounts RLS Policies
-CREATE POLICY chart_of_accounts_policy ON chart_of_accounts
-FOR ALL USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-
--- Cars RLS Policies
-CREATE POLICY cars_policy ON cars
-FOR ALL USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-
--- Customers RLS Policies
-CREATE POLICY customers_policy ON customers
-FOR ALL USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-
--- Sales RLS Policies
-CREATE POLICY sales_policy ON sales
-FOR ALL USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-
--- Purchases RLS Policies
-CREATE POLICY purchases_policy ON purchases
-FOR ALL USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-
--- Transactions RLS Policies
-CREATE POLICY transactions_policy ON transactions
-FOR ALL USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-
--- Journal Items RLS Policies
--- Strengthen with WITH CHECK for writes
-DROP POLICY IF EXISTS journal_items_policy ON journal_items;
-CREATE POLICY journal_items_policy ON journal_items
-  FOR SELECT USING (
-    transaction_id IN (
-      SELECT id FROM transactions WHERE company_id = (SELECT company_id FROM users WHERE id = auth.uid())
-    )
-  );
-CREATE POLICY journal_items_insert_policy ON journal_items
-  FOR INSERT WITH CHECK (
-    transaction_id IN (
-      SELECT id FROM transactions WHERE company_id = (SELECT company_id FROM users WHERE id = auth.uid())
-    )
-  );
-CREATE POLICY journal_items_update_policy ON journal_items
-  FOR UPDATE USING (
-    transaction_id IN (
-      SELECT id FROM transactions WHERE company_id = (SELECT company_id FROM users WHERE id = auth.uid())
-    )
-  )
-  WITH CHECK (
-    transaction_id IN (
-      SELECT id FROM transactions WHERE company_id = (SELECT company_id FROM users WHERE id = auth.uid())
-    )
-  );
-
--- Attachments RLS Policies
-DROP POLICY IF EXISTS attachments_policy ON attachments;
-CREATE POLICY attachments_policy ON attachments
-  FOR SELECT USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-CREATE POLICY attachments_insert_policy ON attachments
-  FOR INSERT WITH CHECK (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-CREATE POLICY attachments_update_policy ON attachments
-  FOR UPDATE USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()))
-  WITH CHECK (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-
--- Settings RLS Policies
-DROP POLICY IF EXISTS settings_policy ON settings;
-CREATE POLICY settings_policy ON settings
-  FOR SELECT USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-CREATE POLICY settings_insert_policy ON settings
-  FOR INSERT WITH CHECK (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-CREATE POLICY settings_update_policy ON settings
-  FOR UPDATE USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()))
-  WITH CHECK (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
-
--- Indexes for Performance
--- Uniqueness guard against double-posting from same source document
+-- =====================================
+-- Indexes
+-- =====================================
 CREATE UNIQUE INDEX IF NOT EXISTS ux_transactions_source ON transactions (company_id, source_document, source_id);
+CREATE INDEX IF NOT EXISTS idx_users_company_id ON users(company_id);
+CREATE INDEX IF NOT EXISTS idx_coa_groups_prefix ON coa_groups(prefix);
+CREATE INDEX IF NOT EXISTS idx_chart_of_accounts_company_id ON chart_of_accounts(company_id);
+CREATE INDEX IF NOT EXISTS idx_chart_of_accounts_group_id ON chart_of_accounts(group_id);
+CREATE INDEX IF NOT EXISTS idx_cars_company_id ON cars(company_id);
+CREATE INDEX IF NOT EXISTS idx_customers_company_id ON customers(company_id);
+CREATE INDEX IF NOT EXISTS idx_sales_company_id ON sales(company_id);
+CREATE INDEX IF NOT EXISTS idx_purchases_company_id ON purchases(company_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_company_id ON transactions(company_id);
+CREATE INDEX IF NOT EXISTS idx_journal_items_transaction_id ON journal_items(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_journal_items_coa_id ON journal_items(coa_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_company_id ON attachments(company_id);
 
-CREATE INDEX idx_users_company_id ON users(company_id);
-CREATE INDEX idx_coa_groups_prefix ON coa_groups(prefix);
-CREATE INDEX idx_chart_of_accounts_company_id ON chart_of_accounts(company_id);
-CREATE INDEX idx_chart_of_accounts_group_id ON chart_of_accounts(group_id);
-CREATE INDEX idx_cars_company_id ON cars(company_id);
-CREATE INDEX idx_customers_company_id ON customers(company_id);
-CREATE INDEX idx_sales_company_id ON sales(company_id);
-CREATE INDEX idx_purchases_company_id ON purchases(company_id);
-CREATE INDEX idx_transactions_company_id ON transactions(company_id);
-CREATE INDEX idx_journal_items_transaction_id ON journal_items(transaction_id);
-CREATE INDEX idx_journal_items_coa_id ON journal_items(coa_id);
-CREATE INDEX idx_attachments_company_id ON attachments(company_id);
-CREATE INDEX idx_settings_company_id ON settings(company_id);
-
--- Enforce single main image per car
 CREATE UNIQUE INDEX IF NOT EXISTS ux_attachments_main_per_car ON attachments (car_id) WHERE is_main = true;
 
--- Helper function to get COA ID by group prefix and company
+-- =====================================
+-- Triggers & Functions
+-- =====================================
+
+-- Function to get user onboarding and role info
+create or replace function public.get_user_access_info()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  result jsonb;
+begin
+  select jsonb_build_object(
+    'company_id', u.company_id,
+    'role', u.role,
+    'is_active', u.is_active,
+    'status', u.status,
+    'is_system_admin', (sa.auth_user_id is not null)
+  )
+  into result
+  from public.users u
+  left join public.system_admins sa
+    on sa.auth_user_id = u.id
+  where u.id = auth.uid();
+
+  return result;
+end;
+$$;
+
+-- Allow only authenticated users to execute
+grant execute on function public.get_user_access_info() to authenticated;
+
+
+-- get_coa_by_group_prefix
 CREATE OR REPLACE FUNCTION get_coa_by_group_prefix(company_id UUID, group_prefix TEXT)
 RETURNS UUID AS $$
 DECLARE
@@ -338,13 +291,11 @@ BEGIN
     WHERE company_id = get_coa_by_group_prefix.company_id
     AND group_id = (SELECT id FROM coa_groups WHERE prefix = get_coa_by_group_prefix.group_prefix)
     LIMIT 1;
-    
     RETURN coa_id;
 END;
 $$ LANGUAGE plpgsql;
 
--- Triggers for Auto-populating Transactions
--- Function to create transaction on sale
+-- create_sale_transaction (same logic)
 CREATE OR REPLACE FUNCTION create_sale_transaction()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -356,7 +307,6 @@ DECLARE
     car_cost NUMERIC;
     car_company UUID;
 BEGIN
-    -- Cross-company guard: sale must belong to the same company as the car
     SELECT company_id INTO car_company FROM cars WHERE id = NEW.car_id;
     IF car_company IS NULL THEN
       RAISE EXCEPTION 'Car not found for id=%', NEW.car_id;
@@ -365,7 +315,6 @@ BEGIN
       RAISE EXCEPTION 'Cross-company reference not allowed (sales.company_id != cars.company_id)';
     END IF;
 
-    -- Create transaction record (idempotency at DB level ensured by unique index on (company_id, source_document, source_id))
     INSERT INTO transactions (
         company_id,
         transaction_date,
@@ -386,49 +335,42 @@ BEGIN
     ON CONFLICT (company_id, source_document, source_id) DO NOTHING
     RETURNING id INTO transaction_id;
 
-    -- If conflict occurred, skip journal items creation
     IF transaction_id IS NULL THEN
       RETURN NEW;
     END IF;
-    
-    -- Get required COA IDs
-    cash_coa_id := get_coa_by_group_prefix(NEW.company_id, '111'); -- Cash
-    sales_coa_id := get_coa_by_group_prefix(NEW.company_id, '411'); -- Sales Revenue
-    inventory_coa_id := get_coa_by_group_prefix(NEW.company_id, '114'); -- Inventory (Asset)
-    cogs_coa_id := get_coa_by_group_prefix(NEW.company_id, '611'); -- COGS (configure exact group as needed)
-    
-    -- Create journal items for double-entry accounting
-    -- 1. Debit: Cash/Receivable (increase asset)
+
+    cash_coa_id := get_coa_by_group_prefix(NEW.company_id, '111');
+    sales_coa_id := get_coa_by_group_prefix(NEW.company_id, '411');
+    inventory_coa_id := get_coa_by_group_prefix(NEW.company_id, '114');
+    cogs_coa_id := get_coa_by_group_prefix(NEW.company_id, '611');
+
     INSERT INTO journal_items (transaction_id, coa_id, debit, credit, ref)
     VALUES (transaction_id, cash_coa_id, NEW.sale_price, 0, 'Sale Payment');
-    
-    -- 2. Credit: Sales Revenue (increase revenue)
+
     INSERT INTO journal_items (transaction_id, coa_id, debit, credit, ref)
     VALUES (transaction_id, sales_coa_id, 0, NEW.sale_price, 'Sale Revenue');
-    
-    -- 3/4. COGS and Inventory reduction
+
     SELECT buy_price INTO car_cost FROM cars WHERE id = NEW.car_id;
     IF car_cost IS NULL THEN
       car_cost := 0;
     END IF;
-    -- 3. Debit: COGS (expense)
+
     INSERT INTO journal_items (transaction_id, coa_id, debit, credit, ref)
     VALUES (transaction_id, cogs_coa_id, car_cost, 0, 'COGS');
-    -- 4. Credit: Inventory (decrease asset)
+
     INSERT INTO journal_items (transaction_id, coa_id, debit, credit, ref)
     VALUES (transaction_id, inventory_coa_id, 0, car_cost, 'Inventory Out');
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger for sales
 DROP TRIGGER IF EXISTS sale_transaction_trigger ON sales;
 CREATE TRIGGER sale_transaction_trigger
 AFTER INSERT ON sales
 FOR EACH ROW EXECUTE FUNCTION create_sale_transaction();
 
--- Function to create transaction on purchase
+-- create_purchase_transaction
 CREATE OR REPLACE FUNCTION create_purchase_transaction()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -437,7 +379,6 @@ DECLARE
     inventory_coa_id UUID;
     car_company UUID;
 BEGIN
-    -- Cross-company guard: purchase must belong to the same company as the car
     SELECT company_id INTO car_company FROM cars WHERE id = NEW.car_id;
     IF car_company IS NULL THEN
       RAISE EXCEPTION 'Car not found for id=%', NEW.car_id;
@@ -446,7 +387,6 @@ BEGIN
       RAISE EXCEPTION 'Cross-company reference not allowed (purchases.company_id != cars.company_id)';
     END IF;
 
-    -- Create transaction record
     INSERT INTO transactions (
         company_id,
         transaction_date,
@@ -470,58 +410,56 @@ BEGIN
     IF transaction_id IS NULL THEN
       RETURN NEW;
     END IF;
-    
-    -- Get required COA IDs
-    cash_coa_id := get_coa_by_group_prefix(NEW.company_id, '111'); -- Cash
-    inventory_coa_id := get_coa_by_group_prefix(NEW.company_id, '114'); -- Inventory
-    
-    -- Create journal items for double-entry accounting
-    -- 1. Debit: Inventory (increase asset)
+
+    cash_coa_id := get_coa_by_group_prefix(NEW.company_id, '111');
+    inventory_coa_id := get_coa_by_group_prefix(NEW.company_id, '114');
+
     INSERT INTO journal_items (transaction_id, coa_id, debit, credit, ref)
     VALUES (transaction_id, inventory_coa_id, NEW.buy_price, 0, 'Purchase Inventory');
-    
-    -- 2. Credit: Cash/Payable (decrease asset/increase liability)
+
     INSERT INTO journal_items (transaction_id, coa_id, debit, credit, ref)
     VALUES (transaction_id, cash_coa_id, 0, NEW.buy_price, 'Purchase Payment');
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger for purchases
 DROP TRIGGER IF EXISTS purchase_transaction_trigger ON purchases;
 CREATE TRIGGER purchase_transaction_trigger
 AFTER INSERT ON purchases
 FOR EACH ROW EXECUTE FUNCTION create_purchase_transaction();
--- COA Groups Seeds
-INSERT INTO coa_groups (prefix, name, type) VALUES
--- 🟢 ASSETS
-('111', 'Kas dan Setara Kas', 'asset'),
-('112', 'Piutang Usaha', 'asset'),
-('113', 'Uang Muka / Advances', 'asset'),
-('114', 'Aset Tetap', 'asset'),
-('115', 'Aset Valas', 'asset'),
 
--- 🔵 LIABILITIES
-('211', 'Hutang Usaha', 'liability'),
-('212', 'Pendapatan Diterima Dimuka', 'liability'),
+-- Function to get user onboarding and role info
+create or replace function public.get_user_access_info()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  result jsonb;
+begin
+  select jsonb_build_object(
+    'company_id', u.company_id,
+    'role', u.role,
+    'status', u.status,
+    'is_system_admin', (sa.auth_user_id is not null)
+  )
+  into result
+  from public.users u
+  left join public.system_admins sa
+    on sa.auth_user_id = u.id
+  where u.id = auth.uid();
 
--- 🟣 EQUITY
-('311', 'Modal Pemilik', 'equity'),
-('312', 'Laba Ditahan', 'equity'),
+  return result;
+end;
+$$;
 
--- 🟠 INCOME
-('411', 'Pendapatan Usaha', 'income'),
-('412', 'Pendapatan Lain-Lain', 'income'),
-
--- 🔴 EXPENSES (split into categories)
-('611', 'Beban Operasional Umum', 'expense'),        -- e.g., gaji, listrik, sewa
-('612', 'Beban Pajak', 'expense'),                   -- e.g., PPh, PPN
-('613', 'Beban Pembelian Aset / Barang Modal', 'expense'),  -- e.g., pembelian mesin, laptop
-('614', 'Beban Selisih Kurs', 'expense');
+-- Allow only authenticated users to execute
+grant execute on function public.get_user_access_info() to authenticated;
 
 
--- Function to get cars with STNK expiring within 31 days
+-- get_upcoming_stnk_expirations
 CREATE OR REPLACE FUNCTION get_upcoming_stnk_expirations(company_id UUID)
 RETURNS TABLE(
     car_id UUID,
@@ -547,38 +485,28 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- updated_at trigger
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION app_current_user_company()
-RETURNS uuid
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT company_id
-  FROM users
-  WHERE id = auth.uid()
-  LIMIT 1;
-$$;
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- View for upcoming STNK expirations
-CREATE OR REPLACE VIEW upcoming_stnk_expirations AS
-SELECT
-    c.id as car_id,
-    c.company_id,
-    c.merk,
-    c.model,
-    c.nomor_plat,
-    c.pajak as expiration_date,
-    (c.pajak - CURRENT_DATE) as days_until_expiry,
-    CASE
-        WHEN (c.pajak - CURRENT_DATE) <= 7 THEN 'URGENT'
-        WHEN (c.pajak - CURRENT_DATE) <= 30 THEN 'WARNING'
-        ELSE 'NORMAL'
-    END as priority_level
-FROM cars c
-WHERE c.pajak BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '31 days');
+DROP TRIGGER IF EXISTS update_companies_updated_at ON companies;
+CREATE TRIGGER update_companies_updated_at
+    BEFORE UPDATE ON companies
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Immutability guard for journal_items (amounts cannot be edited post creation)
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- prevent journal update immutability
 CREATE OR REPLACE FUNCTION prevent_journal_update() RETURNS trigger AS $$
 BEGIN
   IF (OLD.debit IS DISTINCT FROM NEW.debit OR OLD.credit IS DISTINCT FROM NEW.credit) THEN
@@ -594,6 +522,7 @@ BEFORE UPDATE ON journal_items
 FOR EACH ROW
 EXECUTE FUNCTION prevent_journal_update();
 
+-- enforce_max_users
 CREATE OR REPLACE FUNCTION enforce_max_users()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -615,37 +544,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_enforce_max_users ON users;
 CREATE TRIGGER trg_enforce_max_users
 BEFORE INSERT OR UPDATE ON users
 FOR EACH ROW EXECUTE FUNCTION enforce_max_users();
--- Function to automatically update updated_at column
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
 
--- Trigger for users table updated_at
-DROP TRIGGER IF EXISTS update_users_updated_at ON users;
-CREATE TRIGGER update_users_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Trigger for companies table updated_at
-DROP TRIGGER IF EXISTS update_companies_updated_at ON companies;
-CREATE TRIGGER update_companies_updated_at
-    BEFORE UPDATE ON companies
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Trigger for settings table updated_at
-DROP TRIGGER IF EXISTS update_settings_updated_at ON settings;
-CREATE TRIGGER update_settings_updated_at
-    BEFORE UPDATE ON settings
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Trigger to activate company owner when company status changes to active
+-- activate_company_owner
 CREATE OR REPLACE FUNCTION activate_company_owner()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -668,12 +572,12 @@ END;
 $$;
 
 DROP TRIGGER IF EXISTS trg_activate_company_owner ON companies;
-
 CREATE TRIGGER trg_activate_company_owner
 AFTER UPDATE OF status ON companies
 FOR EACH ROW
 EXECUTE FUNCTION activate_company_owner();
 
+-- enforce_company_approval_for_users
 CREATE OR REPLACE FUNCTION enforce_company_approval_for_users()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -689,16 +593,45 @@ END;
 $$;
 
 DROP TRIGGER IF EXISTS trg_enforce_company_approval ON users;
-
 CREATE TRIGGER trg_enforce_company_approval
 BEFORE UPDATE OF is_active ON users
 FOR EACH ROW
 EXECUTE FUNCTION enforce_company_approval_for_users();
 
+CREATE OR REPLACE FUNCTION set_company_default_settings()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.settings := jsonb_build_object(
+    'default_currency', 'IDR',
+    'tax_rate', 0.11,  -- 11% PPN
+    'auto_journal', true,
+    'allow_manual_journal', false,
+    'enable_public_listing', false,
+    'public_listing_url', NULL,
+    'multi_branch_enabled', false,
+    'default_branch', NULL,
+    'branding', jsonb_build_object(
+      'logo_url', NULL,
+      'primary_color', '#1976d2'
+    )
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-----------------------------
--- ENABLE RLS (idempotent)
-----------------------------
+DROP TRIGGER IF EXISTS trg_set_company_defaults ON companies;
+
+CREATE TRIGGER trg_set_company_defaults
+BEFORE INSERT ON companies
+FOR EACH ROW
+EXECUTE FUNCTION set_company_default_settings();
+
+
+-- =====================================
+-- Enable RLS on tenant tables and policies using JWT claims (no subqueries into users)
+-- Important: configure Supabase to include jwt_custom_claims so auth.jwt() contains company_id and role
+-- Example usage in policies: (auth.jwt()->>'company_id')::uuid
+-- =====================================
 ALTER TABLE IF EXISTS companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS coa_groups ENABLE ROW LEVEL SECURITY;
@@ -710,109 +643,129 @@ ALTER TABLE IF EXISTS purchases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS journal_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS attachments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS settings ENABLE ROW LEVEL SECURITY;
 
------------------------------------------
--- Helper note:
--- In each policy we use:
---   (SELECT company_id FROM users WHERE id = auth.uid())
--- which returns the company_id of the currently authenticated user.
--- Make sure your auth user's row exists in users table.
------------------------------------------
+-- Helper SQL snippets used in policies:
+-- company claim: (auth.jwt()->>'company_id')::uuid
+-- role claim: auth.jwt()->>'role'
+-- is_active claim: (auth.jwt()->>'is_active')::boolean
 
-------------------------------------------------
--- COMPANIES (only visible to users that belong)
-------------------------------------------------
+-- COMPANIES policies
 DROP POLICY IF EXISTS companies_select ON companies;
 DROP POLICY IF EXISTS companies_insert ON companies;
 DROP POLICY IF EXISTS companies_update ON companies;
 DROP POLICY IF EXISTS companies_delete ON companies;
 
+-- users should be able to SELECT their own company row or company members can see their company info
 CREATE POLICY companies_select ON companies
   FOR SELECT
-  USING ( id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING (
+    id = (auth.jwt()->>'company_id')::uuid
+  );
 
--- INSERT: allow only admin users to create new companies (adjust role name as needed)
+-- Allow owner/admin update
+CREATE POLICY update_company_settings_policy
+ON companies
+FOR UPDATE
+USING (
+  auth.uid() IN (
+    SELECT id FROM users 
+    WHERE company_id = companies.id 
+      AND role IN ('Owner','Admin')
+  )
+)
+WITH CHECK (true);
+
+
+-- Only system_admins (not tenant admins) can create companies via API. We check system_admin by presence in system_admins table using a SECURITY DEFINER function below.
 CREATE POLICY companies_insert ON companies
   FOR INSERT
-  WITH CHECK ( (SELECT role FROM users WHERE id = auth.uid()) = 'admin' );
+  WITH CHECK ( exists (select 1 from system_admins where auth_user_id = auth.uid()) );
 
 CREATE POLICY companies_update ON companies
   FOR UPDATE
-  USING ( id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( id = (auth.jwt()->>'company_id')::uuid )
+  WITH CHECK ( id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY companies_delete ON companies
   FOR DELETE
-  USING ( id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( id = (auth.jwt()->>'company_id')::uuid );
 
-------------------------------------------------
--- USERS (crud within same company)
--- Note: users.id is expected to match auth.uid() for the session user
-------------------------------------------------
+-- Drop existing policies
 DROP POLICY IF EXISTS users_select ON users;
 DROP POLICY IF EXISTS users_insert ON users;
 DROP POLICY IF EXISTS users_update ON users;
 DROP POLICY IF EXISTS users_delete ON users;
 
+-- SELECT: User can read users from their company, or system admins can read all
 CREATE POLICY users_select ON users
-  FOR SELECT
-  USING (company_id = app_current_user_company());
+FOR SELECT
+USING (
+  (auth.jwt()->>'is_system_admin')::boolean = true
+  OR company_id = (auth.jwt()->>'company_id')::uuid
+);
 
+-- INSERT: 
+-- - System admins can insert into any company
+-- - Tenant admins can insert into their own company
+-- - New signups with NULL company_id and 'pending' status are allowed
+DROP POLICY IF EXISTS users_insert ON users;
 
--- Insertion policy allowing initial user creation and admin-managed users
 CREATE POLICY users_insert ON users
-  FOR INSERT
-  WITH CHECK (
-    -- Allow initial user creation (no company_id, pending status)
-    (company_id IS NULL AND status = 'pending')
-    OR
-    -- Allow admin to create users in their company
-    (company_id = (SELECT company_id FROM users WHERE id = auth.uid())
-    AND (SELECT role FROM users WHERE id = auth.uid()) IN ('admin', 'company_admin'))
-  );
+FOR INSERT
+WITH CHECK (
+  (auth.jwt()->>'is_system_admin')::boolean = true
+  OR (
+    company_id = (auth.jwt()->>'company_id')::uuid
+    AND role IN ('admin', 'company_admin')
+  )
+  OR (
+    company_id IS NULL
+    AND status = 'pending'
+    AND id = auth.uid()
+  )
+);
 
+
+-- UPDATE: 
+-- - System admins can update any user
+-- - Tenant admins can update users in their own company
 CREATE POLICY users_update ON users
-  FOR UPDATE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+FOR UPDATE
+USING (
+  (auth.jwt()->>'is_system_admin')::boolean = true
+  OR company_id = (auth.jwt()->>'company_id')::uuid
+)
+WITH CHECK (
+  (auth.jwt()->>'is_system_admin')::boolean = true
+  OR company_id = (auth.jwt()->>'company_id')::uuid
+);
 
+-- DELETE: 
+-- - System admins can delete any user
+-- - Tenant admins can delete users in their own company
 CREATE POLICY users_delete ON users
-  FOR DELETE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid())
-          AND (SELECT role FROM users WHERE id = auth.uid()) = 'admin' );
+FOR DELETE
+USING (
+  (auth.jwt()->>'is_system_admin')::boolean = true
+  OR (
+    company_id = (auth.jwt()->>'company_id')::uuid
+    AND role IN ('admin', 'company_admin')
+  )
+);
 
-CREATE POLICY user_isolation ON users
-    FOR SELECT USING (company_id = (SELECT company_id FROM users WHERE id = auth.uid()));
 
-------------------------------------------------
--- COA_GROUPS (global read, admin-only writes)
-------------------------------------------------
+-- COA_GROUPS
 DROP POLICY IF EXISTS coa_groups_select ON coa_groups;
 DROP POLICY IF EXISTS coa_groups_insert ON coa_groups;
 DROP POLICY IF EXISTS coa_groups_update ON coa_groups;
 DROP POLICY IF EXISTS coa_groups_delete ON coa_groups;
 
-CREATE POLICY coa_groups_select ON coa_groups
-  FOR SELECT
-  USING ( TRUE );
+CREATE POLICY coa_groups_select ON coa_groups FOR SELECT USING ( TRUE );
+CREATE POLICY coa_groups_insert ON coa_groups FOR INSERT WITH CHECK ( exists (select 1 from system_admins where auth_user_id = auth.uid()) );
+CREATE POLICY coa_groups_update ON coa_groups FOR UPDATE USING ( exists (select 1 from system_admins where auth_user_id = auth.uid()) ) WITH CHECK ( exists (select 1 from system_admins where auth_user_id = auth.uid()) );
+CREATE POLICY coa_groups_delete ON coa_groups FOR DELETE USING ( exists (select 1 from system_admins where auth_user_id = auth.uid()) );
 
-CREATE POLICY coa_groups_insert ON coa_groups
-  FOR INSERT
-  WITH CHECK ( (SELECT role FROM users WHERE id = auth.uid()) = 'admin' );
-
-CREATE POLICY coa_groups_update ON coa_groups
-  FOR UPDATE
-  USING ( (SELECT role FROM users WHERE id = auth.uid()) = 'admin' )
-  WITH CHECK ( (SELECT role FROM users WHERE id = auth.uid()) = 'admin' );
-
-CREATE POLICY coa_groups_delete ON coa_groups
-  FOR DELETE
-  USING ( (SELECT role FROM users WHERE id = auth.uid()) = 'admin' );
-
-------------------------------------------------
--- CHART_OF_ACCOUNTS (company scoped)
-------------------------------------------------
+-- CHART_OF_ACCOUNTS
 DROP POLICY IF EXISTS chart_of_accounts_select ON chart_of_accounts;
 DROP POLICY IF EXISTS chart_of_accounts_insert ON chart_of_accounts;
 DROP POLICY IF EXISTS chart_of_accounts_update ON chart_of_accounts;
@@ -820,35 +773,22 @@ DROP POLICY IF EXISTS chart_of_accounts_delete ON chart_of_accounts;
 
 CREATE POLICY chart_of_accounts_select ON chart_of_accounts
   FOR SELECT
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY chart_of_accounts_insert ON chart_of_accounts
   FOR INSERT
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY chart_of_accounts_update ON chart_of_accounts
   FOR UPDATE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid )
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY chart_of_accounts_delete ON chart_of_accounts
   FOR DELETE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-  CREATE POLICY company_isolation ON companies
-    FOR SELECT USING (id = (SELECT company_id FROM users WHERE id = auth.uid()));
-
-
--- Policy: Company admins can update their company users
-CREATE POLICY company_admin_manage_users ON users
-    FOR UPDATE USING (
-        company_id = (SELECT company_id FROM users WHERE id = auth.uid())
-        AND (SELECT role FROM users WHERE id = auth.uid()) = 'company_admin'
-    );
-
-------------------------------------------------
 -- CARS
-------------------------------------------------
 DROP POLICY IF EXISTS cars_select ON cars;
 DROP POLICY IF EXISTS cars_insert ON cars;
 DROP POLICY IF EXISTS cars_update ON cars;
@@ -856,24 +796,22 @@ DROP POLICY IF EXISTS cars_delete ON cars;
 
 CREATE POLICY cars_select ON cars
   FOR SELECT
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY cars_insert ON cars
   FOR INSERT
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY cars_update ON cars
   FOR UPDATE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid )
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY cars_delete ON cars
   FOR DELETE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-------------------------------------------------
 -- CUSTOMERS
-------------------------------------------------
 DROP POLICY IF EXISTS customers_select ON customers;
 DROP POLICY IF EXISTS customers_insert ON customers;
 DROP POLICY IF EXISTS customers_update ON customers;
@@ -881,24 +819,22 @@ DROP POLICY IF EXISTS customers_delete ON customers;
 
 CREATE POLICY customers_select ON customers
   FOR SELECT
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY customers_insert ON customers
   FOR INSERT
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY customers_update ON customers
   FOR UPDATE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid )
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY customers_delete ON customers
   FOR DELETE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-------------------------------------------------
 -- SALES
-------------------------------------------------
 DROP POLICY IF EXISTS sales_select ON sales;
 DROP POLICY IF EXISTS sales_insert ON sales;
 DROP POLICY IF EXISTS sales_update ON sales;
@@ -906,27 +842,22 @@ DROP POLICY IF EXISTS sales_delete ON sales;
 
 CREATE POLICY sales_select ON sales
   FOR SELECT
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY sales_insert ON sales
   FOR INSERT
-  WITH CHECK (
-    company_id = (SELECT company_id FROM users WHERE id = auth.uid())
-    -- optionally: AND salesperson_id = auth.uid() OR (SELECT role FROM users WHERE id = auth.uid()) = 'admin'
-  );
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY sales_update ON sales
   FOR UPDATE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid )
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY sales_delete ON sales
   FOR DELETE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-------------------------------------------------
 -- PURCHASES
-------------------------------------------------
 DROP POLICY IF EXISTS purchases_select ON purchases;
 DROP POLICY IF EXISTS purchases_insert ON purchases;
 DROP POLICY IF EXISTS purchases_update ON purchases;
@@ -934,24 +865,22 @@ DROP POLICY IF EXISTS purchases_delete ON purchases;
 
 CREATE POLICY purchases_select ON purchases
   FOR SELECT
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY purchases_insert ON purchases
   FOR INSERT
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY purchases_update ON purchases
   FOR UPDATE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid )
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY purchases_delete ON purchases
   FOR DELETE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-------------------------------------------------
 -- TRANSACTIONS
-------------------------------------------------
 DROP POLICY IF EXISTS transactions_select ON transactions;
 DROP POLICY IF EXISTS transactions_insert ON transactions;
 DROP POLICY IF EXISTS transactions_update ON transactions;
@@ -959,25 +888,22 @@ DROP POLICY IF EXISTS transactions_delete ON transactions;
 
 CREATE POLICY transactions_select ON transactions
   FOR SELECT
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY transactions_insert ON transactions
   FOR INSERT
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY transactions_update ON transactions
   FOR UPDATE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid )
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY transactions_delete ON transactions
   FOR DELETE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-------------------------------------------------
--- JOURNAL_ITEMS
--- journal_items does NOT have company_id column, so scope by transactions table
-------------------------------------------------
+-- JOURNAL_ITEMS (scope via transactions.company_id)
 DROP POLICY IF EXISTS journal_items_select ON journal_items;
 DROP POLICY IF EXISTS journal_items_insert ON journal_items;
 DROP POLICY IF EXISTS journal_items_update ON journal_items;
@@ -987,8 +913,7 @@ CREATE POLICY journal_items_select ON journal_items
   FOR SELECT
   USING (
     transaction_id IN (
-      SELECT id FROM transactions
-      WHERE company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+      SELECT id FROM transactions WHERE company_id = (auth.jwt()->>'company_id')::uuid
     )
   );
 
@@ -996,8 +921,7 @@ CREATE POLICY journal_items_insert ON journal_items
   FOR INSERT
   WITH CHECK (
     transaction_id IN (
-      SELECT id FROM transactions
-      WHERE company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+      SELECT id FROM transactions WHERE company_id = (auth.jwt()->>'company_id')::uuid
     )
   );
 
@@ -1005,14 +929,12 @@ CREATE POLICY journal_items_update ON journal_items
   FOR UPDATE
   USING (
     transaction_id IN (
-      SELECT id FROM transactions
-      WHERE company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+      SELECT id FROM transactions WHERE company_id = (auth.jwt()->>'company_id')::uuid
     )
   )
   WITH CHECK (
     transaction_id IN (
-      SELECT id FROM transactions
-      WHERE company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+      SELECT id FROM transactions WHERE company_id = (auth.jwt()->>'company_id')::uuid
     )
   );
 
@@ -1020,14 +942,11 @@ CREATE POLICY journal_items_delete ON journal_items
   FOR DELETE
   USING (
     transaction_id IN (
-      SELECT id FROM transactions
-      WHERE company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+      SELECT id FROM transactions WHERE company_id = (auth.jwt()->>'company_id')::uuid
     )
   );
 
-------------------------------------------------
 -- ATTACHMENTS
-------------------------------------------------
 DROP POLICY IF EXISTS attachments_select ON attachments;
 DROP POLICY IF EXISTS attachments_insert ON attachments;
 DROP POLICY IF EXISTS attachments_update ON attachments;
@@ -1035,48 +954,84 @@ DROP POLICY IF EXISTS attachments_delete ON attachments;
 
 CREATE POLICY attachments_select ON attachments
   FOR SELECT
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY attachments_insert ON attachments
   FOR INSERT
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY attachments_update ON attachments
   FOR UPDATE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid )
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
 CREATE POLICY attachments_delete ON attachments
   FOR DELETE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-------------------------------------------------
--- SETTINGS
-------------------------------------------------
-DROP POLICY IF EXISTS settings_select ON settings;
-DROP POLICY IF EXISTS settings_insert ON settings;
-DROP POLICY IF EXISTS settings_update ON settings;
-DROP POLICY IF EXISTS settings_delete ON settings;
 
-CREATE POLICY settings_select ON settings
   FOR SELECT
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-CREATE POLICY settings_insert ON settings
   FOR INSERT
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-CREATE POLICY settings_update ON settings
   FOR UPDATE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) )
-  WITH CHECK ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid )
+  WITH CHECK ( company_id = (auth.jwt()->>'company_id')::uuid );
 
-CREATE POLICY settings_delete ON settings
   FOR DELETE
-  USING ( company_id = (SELECT company_id FROM users WHERE id = auth.uid()) );
+  USING ( company_id = (auth.jwt()->>'company_id')::uuid );
 
+-- =====================================
+-- View: upcoming_stnk_expirations
+-- =====================================
+CREATE OR REPLACE VIEW upcoming_stnk_expirations AS
+SELECT
+    c.id as car_id,
+    c.company_id,
+    c.merk,
+    c.model,
+    c.nomor_plat,
+    c.pajak as expiration_date,
+    (c.pajak - CURRENT_DATE) as days_until_expiry,
+    CASE
+        WHEN (c.pajak - CURRENT_DATE) <= 7 THEN 'URGENT'
+        WHEN (c.pajak - CURRENT_DATE) <= 30 THEN 'WARNING'
+        ELSE 'NORMAL'
+    END as priority_level
+FROM cars c
+WHERE c.pajak BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '31 days');
 
+-- =====================================
+-- Seed minimal COA groups (idempotent)
+-- =====================================
+INSERT INTO coa_groups (prefix, name, type)
+SELECT * FROM (VALUES
+('111','Kas dan Setara Kas','asset'),
+('112','Piutang Usaha','asset'),
+('113','Uang Muka / Advances','asset'),
+('114','Aset Tetap','asset'),
+('115','Aset Valas','asset'),
+('211','Hutang Usaha','liability'),
+('212','Pendapatan Diterima Dimuka','liability'),
+('311','Modal Pemilik','equity'),
+('312','Laba Ditahan','equity'),
+('411','Pendapatan Usaha','income'),
+('412','Pendapatan Lain-Lain','income'),
+('611','Beban Operasional Umum','expense'),
+('612','Beban Pajak','expense'),
+('613','Beban Pembelian Aset / Barang Modal','expense'),
+('614','Beban Selisih Kurs','expense')
+) AS vals(prefix,name,type)
+ON CONFLICT (prefix) DO NOTHING;
 
-----------------------------
--- End of RLS policies
-----------------------------
+-- =====================================
+-- Final notes (manual steps you should perform):
+--    That makes auth.jwt() include company_id, role, is_active for the authenticated user.
+-- 2) Ensure you insert yourself into system_admins (via dashboard SQL) so you can approve companies.
+--    Example:
+--    INSERT INTO system_admins (auth_user_id, email, name) VALUES ('<your-auth-uid>','you@example.com','You');
+-- 3) Test RLS using policy testing or by using the user's JWT.
+
+-- End of schema
